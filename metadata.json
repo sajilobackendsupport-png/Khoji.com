@@ -1,0 +1,6 @@
+{
+  "name": "Khoji.com",
+  "description": "Emergency and lost device live tracking system in Nepal. Push emergency buttons, coordinate with police, fire, and ambulance, and monitor active signals.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

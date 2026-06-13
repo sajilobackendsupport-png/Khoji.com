@@ -1,0 +1,127 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Catch All)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helper Functions ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Zero-database-dependency isAdmin check (extremely fast, never crashes, secure and un-spoofable)
+    function isAdmin() {
+      return isSignedIn() && 
+             request.auth.token.email == 'sajilobackendsupport@gmail.com' && 
+             request.auth.token.email_verified == true;
+    }
+
+    // --- User Profile Rules ---
+    match /users/{userId} {
+      allow get: if isSignedIn() && (isOwner(userId) || isAdmin());
+      
+      allow list: if isSignedIn() && isAdmin();
+
+      allow create: if isSignedIn() && isOwner(userId) && isValidId(userId) && (
+        incoming().uid == userId &&
+        incoming().email is string &&
+        incoming().fullName is string &&
+        incoming().fullName.size() <= 200 &&
+        incoming().phone is string &&
+        incoming().phone.size() <= 50 &&
+        incoming().status is string &&
+        (incoming().status == 'normal' || incoming().status == 'lost' || incoming().status == 'emergency') &&
+        incoming().role is string && (
+          (incoming().role == 'admin' && isAdmin()) ||
+          (incoming().role == 'user')
+        )
+      );
+
+      allow update: if isSignedIn() && (
+        // Only allow user to update their own non-restrictive fields, keeping role immutable
+        (isOwner(userId) && 
+          incoming().uid == existing().uid &&
+          incoming().email == existing().email &&
+          incoming().role == existing().role &&
+          incoming().fullName is string &&
+          incoming().fullName.size() <= 200 &&
+          incoming().phone is string &&
+          incoming().phone.size() <= 50 &&
+          incoming().status is string &&
+          (incoming().status == 'normal' || incoming().status == 'lost' || incoming().status == 'emergency')
+        ) ||
+        // Admin can update anything except altering UID/Email
+        (isAdmin() && (
+          incoming().uid == existing().uid &&
+          incoming().email == existing().email
+        ))
+      );
+
+      allow delete: if isSignedIn() && isAdmin();
+    }
+
+    // --- Emergency Records ---
+    match /emergencies/{emergencyId} {
+      allow get: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || 
+        isAdmin()
+      );
+
+      allow list: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || 
+        isAdmin()
+      );
+
+      allow create: if isSignedIn() && isValidId(emergencyId) && (
+        incoming().id == emergencyId &&
+        incoming().userId == request.auth.uid &&
+        incoming().userName is string &&
+        incoming().userName.size() <= 200 &&
+        incoming().userPhone is string &&
+        incoming().userPhone.size() <= 50 &&
+        incoming().type is string &&
+        (incoming().type == 'police' || incoming().type == 'fire' || incoming().type == 'ambulance' || incoming().type == 'lost') &&
+        incoming().status is string &&
+        (incoming().status == 'active' || incoming().status == 'resolved') &&
+        incoming().createdAt is string
+      );
+
+      allow update: if isSignedIn() && (
+        // Creator can resolve their active emergency
+        (existing().userId == request.auth.uid && 
+          incoming().id == existing().id &&
+          incoming().userId == existing().userId &&
+          incoming().type == existing().type &&
+          incoming().status is string &&
+          (incoming().status == 'active' || incoming().status == 'resolved') &&
+          incoming().userName == existing().userName &&
+          incoming().userPhone == existing().userPhone &&
+          incoming().createdAt == existing().createdAt
+        ) ||
+        // Admin can update any part of emergency
+        isAdmin()
+      );
+
+      allow delete: if isSignedIn() && isAdmin();
+    }
+  }
+}

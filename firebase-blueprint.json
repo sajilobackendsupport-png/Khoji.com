@@ -1,0 +1,51 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile with role, emergency status and live location.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "fullName": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "status": { "type": "string", "enum": ["normal", "lost", "emergency"] },
+        "lastLocation": {
+          "type": "object"
+        },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "email", "fullName", "phone", "role", "status"]
+    },
+    "Emergency": {
+      "title": "Emergency Alert",
+      "description": "Emergency alert containing location and status information.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userPhone": { "type": "string" },
+        "type": { "type": "string", "enum": ["police", "fire", "ambulance", "lost"] },
+        "status": { "type": "string", "enum": ["active", "resolved"] },
+        "location": {
+          "type": "object"
+        },
+        "details": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "userName", "userPhone", "type", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles with live status and role registration."
+    },
+    "/emergencies/{emergencyId}": {
+      "schema": "Emergency",
+      "description": "Active emergency alerts triggered by users, monitored by emergency dispatch admins."
+    }
+  }
+}
