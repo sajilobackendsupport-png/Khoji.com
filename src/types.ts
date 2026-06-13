@@ -8,6 +8,14 @@ export interface UserLocation {
 export type UserStatus = "normal" | "lost" | "emergency";
 export type UserRole = "user" | "admin";
 
+export interface DeviceInfo {
+  deviceId: string;
+  deviceName: string;
+  lastLocation: UserLocation;
+  status: UserStatus;
+  updatedAt: string;
+}
+
 export interface UserProfile {
   uid: string;
   email: string;
@@ -16,6 +24,7 @@ export interface UserProfile {
   role: UserRole;
   status: UserStatus;
   lastLocation?: UserLocation;
+  devices?: { [deviceId: string]: DeviceInfo };
   updatedAt: string;
 }
 
@@ -34,6 +43,7 @@ export interface EmergencyAlert {
     lng: number;
   };
   details: string;
+  deviceId?: string;
   createdAt: string;
   resolvedAt?: string;
 }

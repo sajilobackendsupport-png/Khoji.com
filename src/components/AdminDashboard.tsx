@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { UserProfile, EmergencyAlert } from "../types";
+import { useState, useEffect, useMemo } from "react";
+import { UserProfile, EmergencyAlert, DeviceInfo } from "../types";
 import { collection, doc, updateDoc, onSnapshot, query, where, getDocs } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../firebase";
 import { Shield, Users, Radio, MapPin, AlertTriangle, Phone, CheckSquare, Search, RefreshCw, Layers } from "lucide-react";
@@ -20,6 +20,38 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState<{ [key: string]: boolean }>({});
   const [sysLog, setSysLog] = useState<{ id: string; msg: string; time: string }[]>([]);
+
+  // Derived state to flatten user profiles and their multiple devices into separate targets
+  const trackedDevices = useMemo(() => {
+    const devicesList: (UserProfile & { realUid: string; deviceId?: string; deviceName?: string })[] = [];
+    
+    users.forEach((user) => {
+      if (user.devices && Object.keys(user.devices).length > 0) {
+        Object.values(user.devices).forEach((dev: DeviceInfo) => {
+          devicesList.push({
+            ...user,
+            uid: `${user.uid}_${dev.deviceId}`, // unique tracking target key so that they plot as separate pins
+            realUid: user.uid,
+            deviceId: dev.deviceId,
+            deviceName: dev.deviceName,
+            fullName: `${user.fullName} (${dev.deviceName || "Simulated Terminal"})`,
+            status: dev.status || user.status,
+            lastLocation: dev.lastLocation || user.lastLocation,
+            updatedAt: dev.updatedAt || user.updatedAt,
+          });
+        });
+      } else {
+        devicesList.push({
+          ...user,
+          realUid: user.uid,
+          deviceName: "Primary Device",
+          uid: user.uid,
+        });
+      }
+    });
+
+    return devicesList;
+  }, [users]);
 
   // Push messages to custom admin console logs
   const addLog = (msg: string) => {
@@ -156,6 +188,10 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       if (userIndex >= 0) {
         globalUsersList[userIndex].status = "normal";
         globalUsersList[userIndex].updatedAt = new Date().toISOString();
+        if (alert.deviceId && globalUsersList[userIndex].devices?.[alert.deviceId]) {
+          globalUsersList[userIndex].devices![alert.deviceId].status = "normal";
+          globalUsersList[userIndex].devices![alert.deviceId].updatedAt = new Date().toISOString();
+        }
         localStorage.setItem("khoji_all_users", JSON.stringify(globalUsersList));
         setUsers(globalUsersList);
         
@@ -165,6 +201,10 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
           const profileObj = JSON.parse(targetIndiv);
           profileObj.status = "normal";
           profileObj.updatedAt = new Date().toISOString();
+          if (alert.deviceId && profileObj.devices?.[alert.deviceId]) {
+            profileObj.devices[alert.deviceId].status = "normal";
+            profileObj.devices[alert.deviceId].updatedAt = new Date().toISOString();
+          }
           localStorage.setItem(`khoji_user_${alert.userId}`, JSON.stringify(profileObj));
         }
       }
@@ -186,10 +226,15 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
 
       // 2. Reset the affected user's state back to 'normal'
       const userRef = doc(db, "users", alert.userId);
-      await updateDoc(userRef, {
+      const updateData: any = {
         status: "normal",
         updatedAt: new Date().toISOString(),
-      });
+      };
+      if (alert.deviceId) {
+        updateData[`devices.${alert.deviceId}.status`] = "normal";
+        updateData[`devices.${alert.deviceId}.updatedAt`] = new Date().toISOString();
+      }
+      await updateDoc(userRef, updateData);
 
       addLog(`Incident #${alert.id.split("-")[2]} resolved. Victim [${alert.userName}] status reset to normal.`);
     } catch (err) {
@@ -201,7 +246,10 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
   };
 
   // Action: Force manual status reset to normal for any user (great for stolen devices successfully found)
-  const manualResetProfile = async (targetUser: UserProfile) => {
+  const manualResetProfile = async (targetUser: UserProfile & { realUid?: string; deviceId?: string }) => {
+    const targetUid = targetUser.realUid || targetUser.uid;
+    const devId = targetUser.deviceId;
+
     setLoading((prev) => ({ ...prev, [targetUser.uid]: true }));
     addLog(`Resetting device status manually for: ${targetUser.fullName}`);
 
@@ -209,29 +257,42 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
     const currentGlobalUsers = localStorage.getItem("khoji_all_users");
     if (currentGlobalUsers) {
       const globalUsersList: UserProfile[] = JSON.parse(currentGlobalUsers);
-      const userIndex = globalUsersList.findIndex(u => u.uid === targetUser.uid);
+      const userIndex = globalUsersList.findIndex(u => u.uid === targetUid);
       if (userIndex >= 0) {
         globalUsersList[userIndex].status = "normal";
         globalUsersList[userIndex].updatedAt = new Date().toISOString();
+        if (devId && globalUsersList[userIndex].devices?.[devId]) {
+          globalUsersList[userIndex].devices![devId].status = "normal";
+          globalUsersList[userIndex].devices![devId].updatedAt = new Date().toISOString();
+        }
         localStorage.setItem("khoji_all_users", JSON.stringify(globalUsersList));
         setUsers(globalUsersList);
         
-        const targetIndiv = localStorage.getItem(`khoji_user_${targetUser.uid}`);
+        const targetIndiv = localStorage.getItem(`khoji_user_${targetUid}`);
         if (targetIndiv) {
           const profileObj = JSON.parse(targetIndiv);
           profileObj.status = "normal";
           profileObj.updatedAt = new Date().toISOString();
-          localStorage.setItem(`khoji_user_${targetUser.uid}`, JSON.stringify(profileObj));
+          if (devId && profileObj.devices?.[devId]) {
+            profileObj.devices[devId].status = "normal";
+            profileObj.devices[devId].updatedAt = new Date().toISOString();
+          }
+          localStorage.setItem(`khoji_user_${targetUid}`, JSON.stringify(profileObj));
         }
       }
     }
 
     try {
-      const userRef = doc(db, "users", targetUser.uid);
-      await updateDoc(userRef, {
+      const userRef = doc(db, "users", targetUid);
+      const updateData: any = {
         status: "normal",
         updatedAt: new Date().toISOString(),
-      });
+      };
+      if (devId) {
+        updateData[`devices.${devId}.status`] = "normal";
+        updateData[`devices.${devId}.updatedAt`] = new Date().toISOString();
+      }
+      await updateDoc(userRef, updateData);
       addLog(`Manual status reset complete for user ${targetUser.fullName}.`);
     } catch (err) {
       console.warn("Firestore reset status deferred.", err);
@@ -243,11 +304,11 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
 
   // Helper stats count
   const activeEmergencies = emergencies.filter((e) => e.status === "active");
-  const deviceLostUsers = users.filter((u) => u.status === "lost");
-  const activeTrackerCount = users.filter((u) => u.lastLocation).length;
+  const deviceLostUsers = trackedDevices.filter((u) => u.status === "lost");
+  const activeTrackerCount = trackedDevices.filter((u) => u.lastLocation).length;
 
   // Render filtering for directories
-  const queriedUsers = users.filter((user) => {
+  const queriedUsers = trackedDevices.filter((user) => {
     const matchesSearch =
       user.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       user.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -371,7 +432,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
             {/* Render the tracking map */}
             <div className="flex-1 min-h-[350px]">
               <TrackingMap
-                users={users}
+                users={trackedDevices}
                 emergencies={emergencies}
                 selectedUser={selectedUser}
                 selectedEmergency={selectedEmergency}

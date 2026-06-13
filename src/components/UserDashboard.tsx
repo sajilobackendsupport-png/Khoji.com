@@ -11,6 +11,39 @@ interface UserDashboardProps {
   onLogout: () => void;
 }
 
+const getDeviceId = () => {
+  let devId = localStorage.getItem("khoji_device_id");
+  if (!devId) {
+    devId = `dev-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`;
+    localStorage.setItem("khoji_device_id", devId);
+  }
+  return devId;
+};
+
+const getDeviceName = () => {
+  let devName = localStorage.getItem("khoji_device_name");
+  if (!devName) {
+    const ua = navigator.userAgent;
+    let browserName = "Web Browser";
+    let platformName = "Device";
+
+    if (ua.includes("Firefox")) browserName = "Firefox";
+    else if (ua.includes("Chrome")) browserName = "Chrome";
+    else if (ua.includes("Safari")) browserName = "Safari";
+    else if (ua.includes("Edge")) browserName = "Edge";
+
+    if (ua.includes("Android")) platformName = "Android";
+    else if (ua.includes("iPhone") || ua.includes("iPad")) platformName = "iOS";
+    else if (ua.includes("Mac")) platformName = "macOS";
+    else if (ua.includes("Windows")) platformName = "Windows";
+    else if (ua.includes("Linux")) platformName = "Linux";
+
+    devName = `${browserName} on ${platformName}`;
+    localStorage.setItem("khoji_device_name", devName);
+  }
+  return devName;
+};
+
 export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
   const [status, setStatus] = useState<UserStatus>(user.status || "normal");
   const [simLocation, setSimLocation] = useState({
@@ -76,7 +109,23 @@ export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
 
   // Handle location update in Firestore
   const updateLocationInDb = async (lat: number, lng: number) => {
-    // Sync to local coordinates representation as fallback
+    const dId = getDeviceId();
+    const dName = getDeviceName();
+
+    const localDeviceEntry = {
+      deviceId: dId,
+      deviceName: dName,
+      lastLocation: {
+        lat,
+        lng,
+        accuracy: 50,
+        timestamp: new Date().toISOString()
+      },
+      status: status,
+      updatedAt: new Date().toISOString()
+    };
+
+    const currentDevices = user.devices || {};
     const updatedUser = {
       ...user,
       lastLocation: {
@@ -84,6 +133,10 @@ export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
         lng,
         accuracy: 50,
         timestamp: new Date().toISOString()
+      },
+      devices: {
+        ...currentDevices,
+        [dId]: localDeviceEntry
       },
       updatedAt: new Date().toISOString()
     };
@@ -94,7 +147,14 @@ export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
     const globalUsersList: UserProfile[] = currentGlobalUsers ? JSON.parse(currentGlobalUsers) : [];
     const existingIndex = globalUsersList.findIndex(u => u.uid === user.uid);
     if (existingIndex >= 0) {
-      globalUsersList[existingIndex] = updatedUser;
+      const existingDevices = globalUsersList[existingIndex].devices || {};
+      globalUsersList[existingIndex] = {
+        ...updatedUser,
+        devices: {
+          ...existingDevices,
+          [dId]: localDeviceEntry
+        }
+      };
     } else {
       globalUsersList.push(updatedUser);
     }
@@ -109,6 +169,7 @@ export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
           accuracy: 50, // simulated accuracy in meters
           timestamp: new Date().toISOString(),
         },
+        [`devices.${dId}`]: localDeviceEntry,
         updatedAt: new Date().toISOString(),
       });
     } catch (error) {
@@ -121,9 +182,30 @@ export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
     setLoading(true);
     setStatus(newStatus);
 
+    const dId = getDeviceId();
+    const dName = getDeviceName();
+
+    const localDeviceEntry = {
+      deviceId: dId,
+      deviceName: dName,
+      lastLocation: {
+        lat: simLocation.lat,
+        lng: simLocation.lng,
+        accuracy: 50,
+        timestamp: new Date().toISOString()
+      },
+      status: newStatus,
+      updatedAt: new Date().toISOString()
+    };
+
+    const currentDevices = user.devices || {};
     const updatedUser = {
       ...user,
       status: newStatus,
+      devices: {
+        ...currentDevices,
+        [dId]: localDeviceEntry
+      },
       updatedAt: new Date().toISOString()
     };
     localStorage.setItem(`khoji_user_${user.uid}`, JSON.stringify(updatedUser));
@@ -133,7 +215,14 @@ export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
     const globalUsersList: UserProfile[] = currentGlobalUsers ? JSON.parse(currentGlobalUsers) : [];
     const existingIndex = globalUsersList.findIndex(u => u.uid === user.uid);
     if (existingIndex >= 0) {
-      globalUsersList[existingIndex] = updatedUser;
+      const existingDevices = globalUsersList[existingIndex].devices || {};
+      globalUsersList[existingIndex] = {
+        ...updatedUser,
+        devices: {
+          ...existingDevices,
+          [dId]: localDeviceEntry
+        }
+      };
     } else {
       globalUsersList.push(updatedUser);
     }
@@ -143,6 +232,8 @@ export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
     try {
       await updateDoc(userDocRef, {
         status: newStatus,
+        [`devices.${dId}.status`]: newStatus,
+        [`devices.${dId}.updatedAt`]: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });
       setMessage({ type: "success", text: `Status updated successfully to ${newStatus.toUpperCase()}` });
@@ -159,6 +250,8 @@ export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
   // Trigger emergency alert SOS in Firestore
   const triggerSOS = async (type: EmergencyType) => {
     setLoading(true);
+    const dId = getDeviceId();
+    const dName = getDeviceName();
     const alertId = `emergency-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     const newAlert: EmergencyAlert = {
       id: alertId,
@@ -172,6 +265,7 @@ export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
         lng: simLocation.lng,
       },
       details: details.trim() || `Urgent ${type} rescue requested in Nepal.`,
+      deviceId: dId,
       createdAt: new Date().toISOString(),
     };
 
@@ -191,6 +285,20 @@ export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
     const targetStatus: UserStatus = type === "lost" ? "lost" : "emergency";
     setStatus(targetStatus);
 
+    const localDeviceEntry = {
+      deviceId: dId,
+      deviceName: dName,
+      lastLocation: {
+        lat: simLocation.lat,
+        lng: simLocation.lng,
+        accuracy: 35,
+        timestamp: new Date().toISOString()
+      },
+      status: targetStatus,
+      updatedAt: new Date().toISOString()
+    };
+
+    const currentDevices = user.devices || {};
     const updatedUser = {
       ...user,
       status: targetStatus,
@@ -200,6 +308,10 @@ export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
         accuracy: 35,
         timestamp: new Date().toISOString()
       },
+      devices: {
+        ...currentDevices,
+        [dId]: localDeviceEntry
+      },
       updatedAt: new Date().toISOString()
     };
     localStorage.setItem(`khoji_user_${user.uid}`, JSON.stringify(updatedUser));
@@ -208,7 +320,14 @@ export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
     const globalUsersList: UserProfile[] = currentGlobalUsers ? JSON.parse(currentGlobalUsers) : [];
     const existingIndex = globalUsersList.findIndex(u => u.uid === user.uid);
     if (existingIndex >= 0) {
-      globalUsersList[existingIndex] = updatedUser;
+      const existingDevices = globalUsersList[existingIndex].devices || {};
+      globalUsersList[existingIndex] = {
+        ...updatedUser,
+        devices: {
+          ...existingDevices,
+          [dId]: localDeviceEntry
+        }
+      };
     } else {
       globalUsersList.push(updatedUser);
     }
@@ -228,6 +347,7 @@ export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
           accuracy: 35,
           timestamp: new Date().toISOString(),
         },
+        [`devices.${dId}`]: localDeviceEntry,
         updatedAt: new Date().toISOString(),
       });
 
