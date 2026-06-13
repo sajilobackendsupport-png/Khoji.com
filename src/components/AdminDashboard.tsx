@@ -23,8 +23,9 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
 
   // Push messages to custom admin console logs
   const addLog = (msg: string) => {
+    const uniqueId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     setSysLog((prev) => [
-      { id: String(Date.now()), msg, time: new Date().toLocaleTimeString() },
+      { id: uniqueId, msg, time: new Date().toLocaleTimeString() },
       ...prev.slice(0, 19),
     ]);
   };
