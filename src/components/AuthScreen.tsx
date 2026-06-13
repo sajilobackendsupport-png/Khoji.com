@@ -22,12 +22,19 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
       await signInWithPopup(auth, googleProvider);
     } catch (err: any) {
       console.error("Google Auth failed:", err);
-      // Fallback message with context
-      setError(
-        err.code === "auth/popup-blocked"
-          ? "Login popup was blocked by browser. Please enable popups for this site."
-          : `Auth connection failed: ${err.message || "Unknown reason"}. Please consider testing with Sandbox bypass below.`
-      );
+      if (err.code === "auth/unauthorized-domain" || (err.message && err.message.toLowerCase().includes("unauthorized-domain"))) {
+        const currentHost = window.location.hostname;
+        const currentOrigin = window.location.origin;
+        setError(
+          `UNAUTHORIZED_DOMAIN: This preview domain ("${currentHost}") is not registered in your Firebase Console yet. To authorize it:\n1. Open your Firebase Console\n2. Navigate to Build > Authentication > Settings > Authorized Domains\n3. Click "Add domain" and enter:\n   ${currentHost}\n\nAlternatively, bypass the authentication check using the simulated buttons below to play around with all features.`
+        );
+      } else {
+        setError(
+          err.code === "auth/popup-blocked"
+            ? "Login popup was blocked by browser. Please enable popups for this site."
+            : `Auth connection failed: ${err.message || "Unknown reason"}. Please consider testing with Sandbox bypass below.`
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -168,17 +175,24 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
             <span className="text-[10px] font-bold uppercase tracking-wider">Fast-Track Simulation</span>
           </div>
 
-          <p className="text-[10px] text-slate-400 leading-normal mb-3">
-            To evaluate client behavior as a standard Citizen directly:
+          <p className="text-[10px] text-slate-400 leading-normal mb-1">
+            Evaluate or demonstrate the application workflows instantly:
           </p>
 
-          <div className="grid grid-cols-1 gap-2">
+          <div className="grid grid-cols-2 gap-2 pt-1">
             <button
               onClick={() => onSandboxToggle("legacy-demo", "user")}
-              className="py-2.5 px-3 bg-slate-900 hover:bg-slate-850 text-indigo-200 rounded-xl font-bold flex items-center justify-center gap-2 border border-slate-800 hover:border-slate-700 transition text-[11px] cursor-pointer"
+              className="py-2.5 px-3 bg-slate-900 hover:bg-slate-850 text-indigo-200 rounded-xl font-bold flex items-center justify-center gap-1.5 border border-slate-800 hover:border-slate-700 transition text-[10px] cursor-pointer"
             >
               <LogIn className="w-3.5 h-3.5 text-slate-400" />
-              <span>Enter Standard Citizen mode</span>
+              <span>Citizen Mode</span>
+            </button>
+            <button
+              onClick={() => onSandboxToggle("legacy-demo", "admin")}
+              className="py-2.5 px-3 bg-slate-900 hover:bg-slate-850 text-red-400 rounded-xl font-bold flex items-center justify-center gap-1.5 border border-slate-800 hover:border-slate-700 transition text-[10px] cursor-pointer"
+            >
+              <Shield className="w-3.5 h-3.5 text-slate-400 font-bold" />
+              <span>Admin Mode</span>
             </button>
           </div>
         </div>

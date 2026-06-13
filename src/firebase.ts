@@ -20,10 +20,9 @@ async function testConnection() {
   try {
     await getDocFromServer(doc(db, "test", "connection"));
     console.log("Firebase Connection Verified: Connected to th-sem-e2244 project");
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("the client is offline")) {
-      console.error("Please check your Firebase configuration or network status.", error);
-    }
+  } catch (error: any) {
+    // If Firestore is offline or not yet created/enabled in the console, log a warning
+    console.warn("Firestore connection check:", error?.message || error);
   }
 }
 testConnection();
