@@ -71,9 +71,24 @@ export default function TrackingMap({
     if (selectedUser?.lastLocation) {
       const { lat, lng } = selectedUser.lastLocation;
       map.setView([lat, lng], 15, { animate: true, duration: 1 });
+      
+      // Delay slightly to allow the map pan animation to finish smoothly, then trigger popup
+      setTimeout(() => {
+        const m = markersRef.current[`user-${selectedUser.uid}`];
+        if (m) {
+          m.openPopup();
+        }
+      }, 300);
     } else if (selectedEmergency?.location) {
       const { lat, lng } = selectedEmergency.location;
       map.setView([lat, lng], 16, { animate: true, duration: 1 });
+      
+      setTimeout(() => {
+        const m = markersRef.current[`emergency-${selectedEmergency.id}`];
+        if (m) {
+          m.openPopup();
+        }
+      }, 300);
     } else if (simulateLocation) {
       map.setView([simulateLocation.lat, simulateLocation.lng], 15, { animate: true, duration: 0.8 });
     }

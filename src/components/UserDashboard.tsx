@@ -74,6 +74,13 @@ export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
     }
   }, []);
 
+  // Automatically register and report this device's status to the admin control panel on dashboard load
+  useEffect(() => {
+    const lat = user.lastLocation?.lat || simLocation.lat;
+    const lng = user.lastLocation?.lng || simLocation.lng;
+    updateLocationInDb(lat, lng);
+  }, []);
+
   // Fetch past emergencies triggered by this user
   useEffect(() => {
     const q = query(

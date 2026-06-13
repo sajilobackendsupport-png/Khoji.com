@@ -23,7 +23,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
 
   // Derived state to flatten user profiles and their multiple devices into separate targets
   const trackedDevices = useMemo(() => {
-    const devicesList: (UserProfile & { realUid: string; deviceId?: string; deviceName?: string })[] = [];
+    const devicesList: (UserProfile & { realUid: string; deviceId?: string; deviceName?: string; rawName: string })[] = [];
     
     users.forEach((user) => {
       if (user.devices && Object.keys(user.devices).length > 0) {
@@ -34,6 +34,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
             realUid: user.uid,
             deviceId: dev.deviceId,
             deviceName: dev.deviceName,
+            rawName: user.fullName,
             fullName: `${user.fullName} (${dev.deviceName || "Simulated Terminal"})`,
             status: dev.status || user.status,
             lastLocation: dev.lastLocation || user.lastLocation,
@@ -45,6 +46,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
           ...user,
           realUid: user.uid,
           deviceName: "Primary Device",
+          rawName: user.fullName,
           uid: user.uid,
         });
       }
@@ -569,50 +571,87 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
 
             {/* Lists area */}
             <div className="space-y-2 flex-1 overflow-y-auto max-h-[200px] xl:max-h-[280px]">
-              {queriedUsers.map((user) => (
-                <div
-                  key={user.uid}
-                  onClick={() => {
-                    setSelectedUser(user);
-                    setSelectedEmergency(null);
-                  }}
-                  className={`p-3 rounded-xl border transition cursor-pointer flex items-center justify-between ${
-                    selectedUser?.uid === user.uid
-                      ? "bg-indigo-50/70 border-indigo-300 ring-1 ring-indigo-200"
-                      : "bg-slate-50/40 border-slate-200 hover:border-slate-300"
-                  }`}
-                >
-                  <div className="space-y-0.5 truncate pr-2">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-slate-800 block truncate">{user.fullName}</span>
-                      <span className={`text-[8px] font-extrabold uppercase px-1 rounded-full border ${
-                        user.status === "emergency" ? "bg-red-100 text-red-800 border-red-200 animate-pulse" : user.status === "lost" ? "bg-amber-100 text-amber-800 border-amber-200" : "bg-emerald-100 text-emerald-800 border-emerald-200"
-                      }`}>
-                        {user.status}
-                      </span>
-                    </div>
-                    <span className="text-[10px] text-slate-500 block truncate">📞 {user.phone}</span>
-                    <span className="text-[10px] text-slate-400 block font-mono truncate">{user.email}</span>
-                  </div>
+              {queriedUsers.map((user) => {
+                const isActiveTarget = selectedUser?.uid === user.uid;
+                return (
+                  <div
+                    key={user.uid}
+                    onClick={() => {
+                      setSelectedUser(user);
+                      setSelectedEmergency(null);
+                    }}
+                    className={`p-3 rounded-xl border transition cursor-pointer flex items-center justify-between group ${
+                      isActiveTarget
+                        ? "bg-indigo-50/80 border-indigo-400 ring-2 ring-indigo-100"
+                        : "bg-slate-50/40 border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                    }`}
+                  >
+                    <div className="space-y-1 truncate pr-2 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {/* Status blinking indicator lamp */}
+                        <span className={`w-2 h-2 rounded-full inline-block ${
+                          user.status === "emergency" 
+                            ? "bg-rose-500 animate-ping" 
+                            : user.status === "lost" 
+                            ? "bg-amber-400 animate-pulse" 
+                            : "bg-emerald-500"
+                        }`} />
+                        <span className="text-xs font-extrabold text-slate-800 block truncate">{user.rawName}</span>
+                        <span className={`text-[8px] font-extrabold uppercase px-1 rounded border ${
+                          user.status === "emergency" 
+                            ? "bg-rose-100 text-rose-800 border-rose-200" 
+                            : user.status === "lost" 
+                            ? "bg-amber-50 text-amber-800 border-amber-200" 
+                            : "bg-emerald-50 text-emerald-800 border-emerald-200"
+                        }`}>
+                          {user.status}
+                        </span>
+                      </div>
+                      
+                      {/* Sub-details: device info & sync rate */}
+                      <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1.5 flex-wrap">
+                        <span className="bg-slate-100 border border-slate-200 text-slate-600 px-1 py-0.5 rounded font-sans uppercase font-bold text-[8px]">
+                          📱 {user.deviceName || "Primary Target"}
+                        </span>
+                        <span className="text-slate-300">•</span>
+                        <span>Sync: {new Date(user.updatedAt).toLocaleTimeString()}</span>
+                      </div>
 
-                  {/* Actions for manual resetting */}
-                  <div>
-                    {user.status !== "normal" && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          manualResetProfile(user);
-                        }}
-                        disabled={loading[user.uid]}
-                        className="p-1 px-1.5 bg-slate-200 text-slate-700 text-[9px] hover:bg-slate-300 font-bold rounded"
-                        title="Manually clear status to safe"
-                      >
-                        Reset Status
-                      </button>
-                    )}
+                      <div className="text-[10px] text-slate-400 space-y-0.5">
+                        <span className="block truncate">📞 {user.phone}</span>
+                        <span className="block truncate font-mono text-[9px]">{user.email}</span>
+                      </div>
+
+                      {isActiveTarget && (
+                        <div className="text-[9px] text-indigo-600 font-extrabold uppercase tracking-wider flex items-center gap-1 mt-1 font-mono">
+                          <span className="animate-bounce">📍</span> Active Tracking Target
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Actions for manual resetting group */}
+                    <div className="flex flex-col gap-1 items-end ml-2 group-hover:opacity-100 transition whitespace-nowrap">
+                      {user.status !== "normal" ? (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            manualResetProfile(user);
+                          }}
+                          disabled={loading[user.uid]}
+                          className="px-2 py-1 bg-slate-900 text-white text-[9px] font-extrabold rounded-lg hover:bg-slate-800 transition shadow disabled:opacity-50"
+                          title="Manually clear status to safe"
+                        >
+                          Reset
+                        </button>
+                      ) : (
+                        <span className="text-[9px] text-slate-400 font-mono uppercase group-hover:text-indigo-600 font-semibold transition">
+                          {isActiveTarget ? "Tracked" : "Track Target"}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               {queriedUsers.length === 0 && (
                 <div className="text-center py-8 text-xs text-slate-400">
