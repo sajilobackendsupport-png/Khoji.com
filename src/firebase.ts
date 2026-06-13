@@ -4,12 +4,12 @@ import { getFirestore, doc, getDocFromServer } from "firebase/firestore";
 
 // Web app's Firebase configuration requested by user
 const firebaseConfig = {
-  apiKey: "AIzaSyBGqt4N0Sn9Q1VK4UaQIWDeROC-HZ1B5s8",
-  authDomain: "khoji-c6605.firebaseapp.com",
-  projectId: "khoji-c6605",
-  storageBucket: "khoji-c6605.firebasestorage.app",
-  messagingSenderId: "784822413140",
-  appId: "1:784822413140:web:eb4aeedfe5345019a1cac1",
+  apiKey: "AIzaSyA1m0rxa17iDqEnkgDArLv45m8_k_VOORU",
+  authDomain: "th-sem-e2244.firebaseapp.com",
+  projectId: "th-sem-e2244",
+  storageBucket: "th-sem-e2244.firebasestorage.app",
+  messagingSenderId: "85748432210",
+  appId: "1:85748432210:web:976683439d5f56d93d4e8b",
   firestoreDatabaseId: "(default)"
 };
 
@@ -19,7 +19,7 @@ export const db = getFirestore(app); /* CRITICAL: Database initialized with cust
 async function testConnection() {
   try {
     await getDocFromServer(doc(db, "test", "connection"));
-    console.log("Firebase Connection Verified: Connected to khoji-c6605 project");
+    console.log("Firebase Connection Verified: Connected to th-sem-e2244 project");
   } catch (error) {
     if (error instanceof Error && error.message.includes("the client is offline")) {
       console.error("Please check your Firebase configuration or network status.", error);
