@@ -9,9 +9,10 @@ import { LOCATION_EMERGENCY_CONTACTS } from "../utils/nepalContacts";
 interface AdminDashboardProps {
   adminUser: UserProfile;
   onLogout: () => void;
+  onOpenProfileModal?: () => void;
 }
 
-export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardProps) {
+export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal }: AdminDashboardProps) {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [emergencies, setEmergencies] = useState<EmergencyAlert[]>([]);
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
@@ -476,19 +477,31 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
         <div className="flex items-center gap-3">
           <button
             onClick={() => syncDatabase()}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-emerald-300 bg-emerald-950/80 hover:bg-emerald-900 transition rounded-lg border border-emerald-700/60 shadow-sm"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-emerald-300 bg-emerald-950/80 hover:bg-emerald-900 transition rounded-lg border border-emerald-700/60 shadow-sm cursor-pointer"
             title="Refresh active users and emergencies directly from Firestore"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            <span>Sync Live DB</span>
+            <span className="hidden sm:inline">Sync Live DB</span>
           </button>
+
+          {onOpenProfileModal && (
+            <button
+              onClick={onOpenProfileModal}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 hover:text-white transition rounded-lg border border-slate-750 cursor-pointer"
+              title="Switch profile, add new user, or manage accounts"
+            >
+              <Users className="w-3.5 h-3.5 text-blue-400" />
+              <span>Profiles / Switch</span>
+            </button>
+          )}
+
           <div className="text-right hidden sm:block">
             <span className="text-xs font-bold text-red-400 uppercase tracking-widest font-mono">SUPER USER</span>
             <p className="text-sm font-semibold text-slate-100">{adminUser.fullName}</p>
           </div>
           <button
             onClick={onLogout}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 hover:text-white transition rounded-lg border border-slate-700"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-200 bg-slate-800 hover:bg-rose-900/60 hover:text-rose-200 hover:border-rose-700 transition rounded-lg border border-slate-700 cursor-pointer"
           >
             Logout
           </button>

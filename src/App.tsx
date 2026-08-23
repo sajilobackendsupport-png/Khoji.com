@@ -2,123 +2,134 @@ import { useState, useEffect } from "react";
 import { onAuthStateChanged, signOut, User } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "./firebase";
-import { UserProfile, UserRole } from "./types";
+import { UserProfile } from "./types";
 import AuthScreen from "./components/AuthScreen";
 import UserOnboarding from "./components/UserOnboarding";
 import UserDashboard from "./components/UserDashboard";
 import AdminDashboard from "./components/AdminDashboard";
+import ProfileModal from "./components/ProfileModal";
+import {
+  getActiveProfile,
+  getSavedProfiles,
+  saveProfile,
+  switchActiveProfile,
+  deleteProfile,
+  clearAllProfiles,
+} from "./utils/profileManager";
 import { Shield } from "lucide-react";
 
 export default function App() {
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  
-  // Controls dynamic sandbox/demo mode for rapid previewing
-  const [demoMode, setDemoMode] = useState<"real" | "legacy-demo">("real");
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [showAuthModalForNewAccount, setShowAuthModalForNewAccount] = useState(false);
 
-  // Subscribe to Firebase Authentication changes
+  // Initialize session from saved profiles or Firebase Auth on mount
   useEffect(() => {
+    // 1. First check if we have a locally stored active profile
+    const activeStored = getActiveProfile();
+    if (activeStored) {
+      setProfile(activeStored);
+      setLoading(false);
+    }
+
+    // 2. Listen to Firebase auth changes to reconcile Google sessions
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setFirebaseUser(user);
-      
+
       if (user) {
-        setDemoMode("real");
         try {
-          // Fetch existing user profile
+          // Fetch existing user profile from Firestore or local cache
           const docRef = doc(db, "users", user.uid);
           const snap = await getDoc(docRef);
-          
+
           if (snap.exists()) {
             const profileData = snap.data() as UserProfile;
+            saveProfile(profileData, true);
             setProfile(profileData);
-            localStorage.setItem(`khoji_user_${user.uid}`, JSON.stringify(profileData));
           } else {
-            // Check local fallback
+            // Check if profile exists locally
             const localUser = localStorage.getItem(`khoji_user_${user.uid}`);
             if (localUser) {
-              setProfile(JSON.parse(localUser));
+              const parsed = JSON.parse(localUser);
+              saveProfile(parsed, true);
+              setProfile(parsed);
             } else {
+              // User needs onboarding setup
               setProfile(null);
             }
           }
         } catch (error) {
-          console.error("Error reading Firestore profile of active user: attempting secure local storage fallback", error);
+          console.warn("Firestore profile fetch notice, falling back to local session:", error);
           const localUser = localStorage.getItem(`khoji_user_${user.uid}`);
           if (localUser) {
-            setProfile(JSON.parse(localUser));
-          } else {
-            setProfile(null);
+            const parsed = JSON.parse(localUser);
+            saveProfile(parsed, true);
+            setProfile(parsed);
           }
-        }
-      } else {
-        if (demoMode === "real") {
-          setProfile(null);
         }
       }
       setLoading(false);
     });
 
     return unsubscribe;
-  }, [demoMode]);
+  }, []);
 
-  // Handler for custom local testing sandbox logins
-  const handleSandboxAccess = (mode: "real" | "legacy-demo", mockRole?: "user" | "admin") => {
+  // Handler for custom local testing sandbox or custom admin logins
+  const handleAuthAccess = (mode: "real" | "legacy-demo", mockRole?: "user" | "admin") => {
     setLoading(true);
-    setDemoMode(mode);
 
-    if (mode === "legacy-demo") {
-      // Mock profiles to test standard interactions in separate simulated routes
-      const mockProfile: UserProfile =
-        mockRole === "admin"
-          ? {
-              uid: "sandbox-admin",
-              email: "Khoji@2026",
-              fullName: "Khoji Administrator",
-              phone: "9708547685",
-              role: "admin",
-              status: "normal",
-              lastLocation: { lat: 27.7172, lng: 85.3240, timestamp: new Date().toISOString() },
-              updatedAt: new Date().toISOString(),
-            }
-          : {
-              uid: "sandbox-citizen",
-              email: "citizen@khoji.com",
-              fullName: "Citizen Responder (Sandbox Visitor)",
-              phone: "9851080002",
-              role: "user",
-              status: "normal",
-              lastLocation: { lat: 27.7172, lng: 85.3240, timestamp: new Date().toISOString() },
-              updatedAt: new Date().toISOString(),
-            };
-
-      setProfile(mockProfile);
+    if (mode === "legacy-demo" && mockRole === "admin") {
+      const adminProfile: UserProfile = {
+        uid: "sajilo-admin-root",
+        email: "sajilobackendsupport@gmail.com",
+        fullName: "Sajilo Command Dispatcher",
+        phone: "9851080000",
+        role: "admin",
+        status: "normal",
+        updatedAt: new Date().toISOString(),
+      };
+      saveProfile(adminProfile, true);
+      setProfile(adminProfile);
+      setShowAuthModalForNewAccount(false);
       setLoading(false);
     } else {
-      setProfile(null);
-      setFirebaseUser(null);
+      setShowAuthModalForNewAccount(false);
       setLoading(false);
     }
   };
 
-  // Sign out handler (works synchronously for sandbox as well)
+  // Switch active profile
+  const handleProfileSwitched = (newProfile: UserProfile) => {
+    switchActiveProfile(newProfile.uid);
+    setProfile(newProfile);
+  };
+
+  // Delete profile
+  const handleProfileDeleted = (remaining: UserProfile[], newActive: UserProfile | null) => {
+    setProfile(newActive);
+  };
+
+  // Logout current active profile
   const handleLogout = async () => {
     setLoading(true);
-    if (demoMode === "real") {
-      try {
-        await signOut(auth);
-      } catch (err) {
-        console.error("Firebase Signout rejection:", err);
-      }
+    if (profile) {
+      const { newActive } = deleteProfile(profile.uid);
+      setProfile(newActive);
     }
-    setProfile(null);
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.warn("Sign out notice:", err);
+    }
     setFirebaseUser(null);
-    setDemoMode("real");
     setLoading(false);
   };
 
   // Onboarding successfully completed
   const handleOnboardingComplete = (completedProfile: UserProfile) => {
+    saveProfile(completedProfile, true);
     setProfile(completedProfile);
   };
 
@@ -130,16 +141,31 @@ export default function App() {
           <Shield className="w-6 h-6 animate-spin text-white" />
         </div>
         <div className="text-center space-y-1">
-          <h3 className="text-sm font-bold text-slate-100 uppercase tracking-widest font-mono">Initializing GPS Tracker</h3>
-          <p className="text-xs text-slate-400">Securing location coordinates of Nepal help desk...</p>
+          <h3 className="text-sm font-bold text-slate-100 uppercase tracking-widest font-mono">Restoring Secure Session</h3>
+          <p className="text-xs text-slate-400">Loading your profile & Nepal emergency network...</p>
         </div>
       </div>
     );
   }
 
-  // --- 1. RENDER MAIN AUTH FOR UNAUTHENTICATED USERS ---
-  if (!profile && !firebaseUser) {
-    return <AuthScreen onSandboxToggle={handleSandboxAccess} isLoading={loading} />;
+  // --- 1. RENDER MAIN AUTH FOR UNAUTHENTICATED USERS OR WHEN EXPLICITLY ADDING AN ACCOUNT ---
+  if ((!profile && !firebaseUser) || showAuthModalForNewAccount) {
+    return (
+      <>
+        <AuthScreen
+          onSandboxToggle={handleAuthAccess}
+          isLoading={loading}
+        />
+        {showAuthModalForNewAccount && profile && (
+          <button
+            onClick={() => setShowAuthModalForNewAccount(false)}
+            className="fixed top-4 right-4 z-50 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl border border-slate-700 shadow-xl transition"
+          >
+            ← Return to {profile.fullName}
+          </button>
+        )}
+      </>
+    );
   }
 
   // --- 2. RENDER PROFILE CREATION ONBOARDING FOR NEW REAL USERS ---
@@ -153,11 +179,37 @@ export default function App() {
     );
   }
 
-  // --- 3. RENDER ADMIN DASHBOARD ---
-  if (profile && profile.role === "admin") {
-    return <AdminDashboard adminUser={profile} onLogout={handleLogout} />;
-  }
+  // --- 3. RENDER DASHBOARDS WITH PROFILE SWITCHER MODAL ---
+  return (
+    <>
+      {profile && profile.role === "admin" ? (
+        <AdminDashboard
+          adminUser={profile}
+          onLogout={handleLogout}
+          onOpenProfileModal={() => setIsProfileModalOpen(true)}
+        />
+      ) : (
+        profile && (
+          <UserDashboard
+            user={profile}
+            onLogout={handleLogout}
+            onOpenProfileModal={() => setIsProfileModalOpen(true)}
+          />
+        )
+      )}
 
-  // --- 4. RENDER USER DASHBOARD ---
-  return <UserDashboard user={profile} onLogout={handleLogout} />;
+      {/* Global Profile Switcher / Account Manager Modal */}
+      {profile && (
+        <ProfileModal
+          isOpen={isProfileModalOpen}
+          onClose={() => setIsProfileModalOpen(false)}
+          currentProfile={profile}
+          onProfileSwitched={handleProfileSwitched}
+          onProfileDeleted={handleProfileDeleted}
+          onAddNewGoogleAccount={() => setShowAuthModalForNewAccount(true)}
+          onLogoutCurrent={handleLogout}
+        />
+      )}
+    </>
+  );
 }

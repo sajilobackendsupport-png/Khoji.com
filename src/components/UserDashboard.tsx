@@ -30,12 +30,14 @@ import {
   ArrowDownRight,
   ArrowDownLeft,
   ArrowUpLeft,
+  Users,
 } from "lucide-react";
 import TrackingMap from "./TrackingMap";
 
 interface UserDashboardProps {
   user: UserProfile;
   onLogout: () => void;
+  onOpenProfileModal?: () => void;
 }
 
 const getDeviceId = () => {
@@ -71,7 +73,7 @@ const getDeviceName = () => {
   return devName;
 };
 
-export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
+export default function UserDashboard({ user, onLogout, onOpenProfileModal }: UserDashboardProps) {
   const [status, setStatus] = useState<UserStatus>(user.status || "normal");
   const [simLocation, setSimLocation] = useState({
     lat: user.lastLocation?.lat || 27.7172,
@@ -493,17 +495,33 @@ export default function UserDashboard({ user, onLogout }: UserDashboardProps) {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="text-right hidden sm:block">
+        <div className="flex items-center gap-3">
+          {onOpenProfileModal && (
+            <button
+              onClick={onOpenProfileModal}
+              className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-200/80 transition rounded-xl shadow-sm cursor-pointer"
+              title="Switch profile, add family account, or manage saved profiles"
+            >
+              <Users className="w-3.5 h-3.5 text-blue-600" />
+              <span className="hidden sm:inline">Switch / Add Profile</span>
+              <span className="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full font-mono">
+                Active: {user.fullName.split(" ")[0]}
+              </span>
+            </button>
+          )}
+
+          <div className="text-right hidden md:block">
             <span className="text-sm font-semibold text-slate-800">{user.fullName}</span>
             <p className="text-[11px] text-slate-500">{user.email}</p>
           </div>
+
           <button
             onClick={onLogout}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition rounded-lg"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition rounded-xl border border-transparent cursor-pointer"
+            title="Log out of current profile"
           >
             <LogOut className="w-3.5 h-3.5" />
-            <span>Logout</span>
+            <span className="hidden sm:inline">Logout</span>
           </button>
         </div>
       </header>
