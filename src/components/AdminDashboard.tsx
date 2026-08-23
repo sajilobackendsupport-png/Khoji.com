@@ -365,6 +365,73 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
     }
   };
 
+  // Handle simulated movement / heading turns for selected target
+  const handleSimulateUserMove = async (
+    newLat: number,
+    newLng: number,
+    heading: number,
+    speed: number
+  ) => {
+    if (!selectedUser) return;
+    const targetUid = (selectedUser as any).realUid || selectedUser.uid;
+    const devId = (selectedUser as any).deviceId;
+
+    const newLoc = {
+      lat: newLat,
+      lng: newLng,
+      heading,
+      speed,
+      accuracy: 20,
+      timestamp: new Date().toISOString(),
+    };
+
+    addLog(
+      `Target [${selectedUser.fullName}] altered heading: ${heading}° (${speed} km/h) • Coordinates: ${newLat.toFixed(
+        5
+      )}, ${newLng.toFixed(5)}`
+    );
+
+    // Update in-memory users state
+    setUsers((prev) =>
+      prev.map((u) => {
+        if (u.uid === targetUid) {
+          return {
+            ...u,
+            lastLocation: newLoc,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return u;
+      })
+    );
+
+    // Update selectedUser so HUD stays in sync
+    setSelectedUser((prev) =>
+      prev
+        ? {
+            ...prev,
+            lastLocation: newLoc,
+            updatedAt: new Date().toISOString(),
+          }
+        : null
+    );
+
+    try {
+      const userRef = doc(db, "users", targetUid);
+      const updatePayload: any = {
+        lastLocation: newLoc,
+        updatedAt: new Date().toISOString(),
+      };
+      if (devId) {
+        updatePayload[`devices.${devId}.lastLocation`] = newLoc;
+        updatePayload[`devices.${devId}.updatedAt`] = new Date().toISOString();
+      }
+      await updateDoc(userRef, updatePayload);
+    } catch (e) {
+      console.warn("Firestore location broadcast deferred:", e);
+    }
+  };
+
   // Helper stats count
   const activeEmergencies = emergencies.filter((e) => e.status === "active");
   const deviceLostUsers = trackedDevices.filter((u) => u.status === "lost");
@@ -507,6 +574,12 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                 emergencies={emergencies}
                 selectedUser={selectedUser}
                 selectedEmergency={selectedEmergency}
+                onSelectUser={(u) => {
+                  setSelectedUser(u);
+                  setSelectedEmergency(null);
+                  addLog(`Selected target [${u.fullName}] for live GPS & direction telemetry tracking.`);
+                }}
+                onSimulateMove={handleSimulateUserMove}
               />
             </div>
           </div>

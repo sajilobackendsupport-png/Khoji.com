@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import { signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
+import { signInWithPopup } from "firebase/auth";
 import { auth, googleProvider } from "../firebase";
-import { Shield, Radio, KeyRound, Mail, AlertCircle, Sparkles, LogIn } from "lucide-react";
+import { Shield, Radio, KeyRound, Mail, AlertCircle, Phone } from "lucide-react";
 
 interface AuthScreenProps {
   onSandboxToggle: (mode: "real" | "legacy-demo", mockRole?: "user" | "admin") => void;
@@ -24,15 +24,14 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
       console.error("Google Auth failed:", err);
       if (err.code === "auth/unauthorized-domain" || (err.message && err.message.toLowerCase().includes("unauthorized-domain"))) {
         const currentHost = window.location.hostname;
-        const currentOrigin = window.location.origin;
         setError(
-          `UNAUTHORIZED_DOMAIN: This preview domain ("${currentHost}") is not registered in your Firebase Console yet. To authorize it:\n1. Open your Firebase Console\n2. Navigate to Build > Authentication > Settings > Authorized Domains\n3. Click "Add domain" and enter:\n   ${currentHost}\n\nAlternatively, bypass the authentication check using the simulated buttons below to play around with all features.`
+          `UNAUTHORIZED_DOMAIN: This preview domain ("${currentHost}") is not registered in your Firebase Console yet. To authorize it:\n1. Open your Firebase Console\n2. Navigate to Build > Authentication > Settings > Authorized Domains\n3. Click "Add domain" and enter:\n   ${currentHost}`
         );
       } else {
         setError(
           err.code === "auth/popup-blocked"
             ? "Login popup was blocked by browser. Please enable popups for this site."
-            : `Auth connection failed: ${err.message || "Unknown reason"}. Please consider testing with Sandbox bypass below.`
+            : `Auth connection failed: ${err.message || "Unknown reason"}.`
         );
       }
     } finally {
@@ -49,17 +48,14 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
     const userClean = username.trim();
     const passClean = password.trim();
 
-    if (
-      (userClean === "sajilo@111" && passClean === "Nepal@111") ||
-      (userClean === "Khoji@2026" && passClean === "Khoji@9708547685")
-    ) {
+    if (userClean === "sajilo@111" && passClean === "Nepal@111") {
       onSandboxToggle("legacy-demo", "admin");
     } else {
       setError(
         "❌ Access Denied: Invalid credentials. Authorized Admin: Username 'sajilo@111' with Password 'Nepal@111'."
       );
-      setLoading(false);
     }
+    setLoading(false);
   };
 
   return (
@@ -67,17 +63,17 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
       className="min-h-screen bg-slate-900 flex items-center justify-center p-4 relative font-sans overflow-hidden"
       id="auth-screen-backdrop"
     >
-      {/* Visual glowing particle decorations (Cosmic Slate style) */}
+      {/* Visual glowing particle decorations */}
       <div className="absolute top-1/4 left-1/4 w-80 h-80 rounded-full bg-red-600/10 blur-[100px] pointer-events-none" />
       <div className="absolute bottom-1/4 right-1/4 w-80 h-80 rounded-full bg-indigo-600/10 blur-[100px] pointer-events-none" />
 
       {/* Main card panel */}
-      <div className="bg-slate-950 border border-slate-800 rounded-3xl w-full max-w-md p-6 md:p-8 space-y-7 shadow-2xl relative z-10 animate-fade-in">
+      <div className="bg-slate-950 border border-slate-800 rounded-3xl w-full max-w-md p-6 md:p-8 space-y-6 shadow-2xl relative z-10 animate-fade-in">
         
         {/* Branding header area */}
         <div className="text-center space-y-2">
           <div className="w-14 h-14 bg-red-600 rounded-2xl flex items-center justify-center text-white mx-auto shadow-xl shadow-red-950 hover:scale-105 transition-transform duration-300">
-            <Shield className="w-7 h-7" />
+            <Radio className="w-7 h-7 animate-pulse" />
           </div>
           <div>
             <h2 className="text-2xl font-extrabold text-white tracking-tight">Khoji<span className="text-red-500">.com</span></h2>
@@ -95,7 +91,7 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
         {/* Custom Admin Login Form */}
         <form onSubmit={handleCustomLogin} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Administrator Username</label>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-mono">Administrator Username</label>
             <div className="relative">
               <Mail className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
               <input
@@ -104,13 +100,13 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
                 placeholder="e.g. sajilo@111"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full text-xs pl-10 pr-4 py-3 bg-slate-900/60 border border-slate-800 text-white rounded-xl focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 transition font-sans text-slate-100"
+                className="w-full text-xs pl-10 pr-4 py-3 bg-slate-900/60 border border-slate-800 text-white rounded-xl focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 transition font-mono text-slate-100"
               />
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Security Password</label>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-mono">Security Password</label>
             <div className="relative">
               <KeyRound className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
               <input
@@ -119,7 +115,7 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
                 placeholder="••••••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full text-xs pl-10 pr-4 py-3 bg-slate-900/60 border border-slate-800 text-white rounded-xl focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 transition font-sans text-slate-100"
+                className="w-full text-xs pl-10 pr-4 py-3 bg-slate-900/60 border border-slate-800 text-white rounded-xl focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 transition font-mono text-slate-100"
               />
             </div>
           </div>
@@ -137,10 +133,10 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
         {/* Divider badge */}
         <div className="relative flex items-center justify-center">
           <div className="absolute inset-0 flex items-center" aria-hidden="true">
-            <div className="w-full border-t border-slate-850"></div>
+            <div className="w-full border-t border-slate-800"></div>
           </div>
           <span className="relative px-3 bg-slate-950 text-[9px] font-bold text-slate-500 uppercase tracking-widest">
-            Other Entry Options
+            Citizen Entry Option
           </span>
         </div>
 
@@ -174,33 +170,11 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
           </button>
         </div>
 
-        {/* Sandbox Quick Bypass Area */}
-        <div className="space-y-3 bg-slate-900/40 p-4 border border-slate-800/80 rounded-2xl relative">
-          <div className="flex items-center gap-2 mb-1.5 text-indigo-400">
-            <Sparkles className="w-4 h-4 text-indigo-400" />
-            <span className="text-[10px] font-bold uppercase tracking-wider">Fast-Track Simulation</span>
-          </div>
-
-          <p className="text-[10px] text-slate-400 leading-normal mb-1">
-            Evaluate or demonstrate the application workflows instantly:
+        <div className="text-center pt-3 border-t border-slate-850">
+          <p className="text-[11px] text-slate-400 flex items-center justify-center gap-1.5">
+            <Phone className="w-3.5 h-3.5 text-red-500" />
+            <span>National Emergency Hotline: Dial 100 / 102 / 101</span>
           </p>
-
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            <button
-              onClick={() => onSandboxToggle("legacy-demo", "user")}
-              className="py-2.5 px-3 bg-slate-900 hover:bg-slate-850 text-indigo-200 rounded-xl font-bold flex items-center justify-center gap-1.5 border border-slate-800 hover:border-slate-700 transition text-[10px] cursor-pointer"
-            >
-              <LogIn className="w-3.5 h-3.5 text-slate-400" />
-              <span>Citizen Mode</span>
-            </button>
-            <button
-              onClick={() => onSandboxToggle("legacy-demo", "admin")}
-              className="py-2.5 px-3 bg-slate-900 hover:bg-slate-850 text-red-400 rounded-xl font-bold flex items-center justify-center gap-1.5 border border-slate-800 hover:border-slate-700 transition text-[10px] cursor-pointer"
-            >
-              <Shield className="w-3.5 h-3.5 text-slate-400 font-bold" />
-              <span>Admin Mode</span>
-            </button>
-          </div>
         </div>
 
       </div>

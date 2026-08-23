@@ -2,6 +2,17 @@ export interface UserLocation {
   lat: number;
   lng: number;
   accuracy?: number;
+  heading?: number; // 0 to 360 degrees (0 = North, 90 = East, 180 = South, 270 = West)
+  speed?: number; // Speed in m/s or km/h
+  altitude?: number; // Altitude in meters
+  timestamp: string;
+}
+
+export interface LocationBreadcrumb {
+  lat: number;
+  lng: number;
+  heading?: number;
+  speed?: number;
   timestamp: string;
 }
 
