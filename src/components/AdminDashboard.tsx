@@ -64,45 +64,107 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
     ]);
   };
 
+  // Synchronize users and emergencies directly from Firestore
+  const syncDatabase = async () => {
+    addLog("Connecting to Cloud Firestore database directly...");
+    try {
+      // 1. Fetch Users
+      const usersSnap = await getDocs(collection(db, "users"));
+      const uList: UserProfile[] = [];
+      usersSnap.forEach((docSnap) => {
+        const data = docSnap.data();
+        uList.push({
+          uid: data.uid || docSnap.id,
+          email: data.email || "citizen@khoji.com",
+          fullName: data.fullName || data.name || data.displayName || "Registered Citizen",
+          phone: data.phone || data.phoneNumber || "No Phone",
+          role: data.role || "user",
+          status: data.status || "normal",
+          lastLocation: data.lastLocation || (data.location ? {
+            lat: data.location.latitude || data.location.lat || 27.7172,
+            lng: data.location.longitude || data.location.lng || 85.3240,
+            timestamp: data.location.timestamp || new Date().toISOString()
+          } : undefined),
+          devices: data.devices,
+          updatedAt: data.updatedAt || new Date().toISOString(),
+        } as UserProfile);
+      });
+      setUsers(uList);
+      localStorage.setItem("khoji_all_users", JSON.stringify(uList));
+      addLog(`✅ Synced ${uList.length} registered citizens directly from Firestore.`);
+
+      // 2. Fetch Emergencies
+      const emergSnap = await getDocs(collection(db, "emergencies"));
+      const eList: EmergencyAlert[] = [];
+      emergSnap.forEach((docSnap) => {
+        const data = docSnap.data();
+        eList.push({
+          id: data.id || docSnap.id,
+          userId: data.userId || "anonymous",
+          userName: data.userName || data.name || "Citizen SOS",
+          userPhone: data.userPhone || data.phone || "100",
+          type: data.type || "police",
+          status: data.status || "active",
+          location: data.location || { lat: 27.7172, lng: 85.3240 },
+          details: data.details || "",
+          createdAt: data.createdAt || new Date().toISOString(),
+          resolvedAt: data.resolvedAt,
+          deviceId: data.deviceId,
+          deviceName: data.deviceName,
+        } as EmergencyAlert);
+      });
+      eList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setEmergencies(eList);
+      localStorage.setItem("khoji_all_emergencies", JSON.stringify(eList));
+      addLog(`✅ Synced ${eList.length} emergency alerts from Firestore.`);
+    } catch (err: any) {
+      console.warn("Direct Firestore fetch error:", err);
+      addLog(`Firestore sync notice: ${err?.message || "Using active stream listener."}`);
+    }
+  };
+
   // 1. Mount Real-time subscription to Users updates
   useEffect(() => {
     addLog("Initializing secure tracking connection to Nepal GPS network...");
+    syncDatabase();
+
     const unsubscribe = onSnapshot(
       collection(db, "users"),
       (snapshot) => {
         const uList: UserProfile[] = [];
-        snapshot.forEach((doc) => {
-          uList.push(doc.data() as UserProfile);
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          uList.push({
+            uid: data.uid || docSnap.id,
+            email: data.email || "citizen@khoji.com",
+            fullName: data.fullName || data.name || data.displayName || "Registered Citizen",
+            phone: data.phone || data.phoneNumber || "No Phone",
+            role: data.role || "user",
+            status: data.status || "normal",
+            lastLocation: data.lastLocation || (data.location ? {
+              lat: data.location.latitude || data.location.lat || 27.7172,
+              lng: data.location.longitude || data.location.lng || 85.3240,
+              timestamp: data.location.timestamp || new Date().toISOString()
+            } : undefined),
+            devices: data.devices,
+            updatedAt: data.updatedAt || new Date().toISOString(),
+          } as UserProfile);
         });
         setUsers(uList);
         addLog(`Synchronized active tracking signals for ${uList.length} users successfully.`);
         localStorage.setItem("khoji_all_users", JSON.stringify(uList));
       },
       (error) => {
-        console.warn("Active users stream blocked. Activating local directory backup.", error);
-        // Fallback to local
+        console.warn("Active users stream notice:", error);
         const localUsersList = localStorage.getItem("khoji_all_users");
         if (localUsersList) {
-          const listObj = JSON.parse(localUsersList);
-          setUsers(listObj);
-          addLog(`[Local Fallback] Synchronized active local tracking signals for ${listObj.length} users.`);
-        } else {
-          // Provide default simulation users
-          const defaultUsers: UserProfile[] = [
-            {
-              uid: "sandbox-citizen",
-              email: "citizen@khoji.com",
-              fullName: "Citizen Responder (Local Sample)",
-              phone: "9851080002",
-              role: "user",
-              status: "emergency",
-              lastLocation: { lat: 27.7172, lng: 85.3240, timestamp: new Date().toISOString() },
-              updatedAt: new Date().toISOString(),
+          try {
+            const listObj = JSON.parse(localUsersList);
+            if (Array.isArray(listObj) && listObj.length > 0) {
+              setUsers(listObj);
+              addLog(`[Cache] Loaded active tracking signals for ${listObj.length} users.`);
             }
-          ];
-          setUsers(defaultUsers);
-          localStorage.setItem("khoji_all_users", JSON.stringify(defaultUsers));
-          addLog("Synchronized offline Nepal GPS directory.");
+          } catch {}
         }
       }
     );
@@ -116,8 +178,22 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       collection(db, "emergencies"),
       (snapshot) => {
         const eList: EmergencyAlert[] = [];
-        snapshot.forEach((doc) => {
-          eList.push(doc.data() as EmergencyAlert);
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          eList.push({
+            id: data.id || docSnap.id,
+            userId: data.userId || "anonymous",
+            userName: data.userName || data.name || "Citizen SOS",
+            userPhone: data.userPhone || data.phone || "100",
+            type: data.type || "police",
+            status: data.status || "active",
+            location: data.location || { lat: 27.7172, lng: 85.3240 },
+            details: data.details || "",
+            createdAt: data.createdAt || new Date().toISOString(),
+            resolvedAt: data.resolvedAt,
+            deviceId: data.deviceId,
+            deviceName: data.deviceName,
+          } as EmergencyAlert);
         });
         // Sort by date descending
         eList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -133,30 +209,15 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
         }
       },
       (error) => {
-        console.warn("Active emergencies stream blocked. Activating local SOS alert dispatcher fallback.", error);
+        console.warn("Active emergencies stream notice:", error);
         const localEList = localStorage.getItem("khoji_all_emergencies");
         if (localEList) {
-          const list: EmergencyAlert[] = JSON.parse(localEList);
-          setEmergencies(list);
-          const activeCount = list.filter((e) => e.status === "active").length;
-          addLog(`[Local Fallback] Loaded ${list.length} local emergency alerts. Count active: ${activeCount}.`);
-        } else {
-          const defaultEmergencies: EmergencyAlert[] = [
-            {
-              id: "emergency-local-demo",
-              userId: "sandbox-citizen",
-              userName: "Citizen Responder (Local Sample)",
-              userPhone: "9851080002",
-              type: "police",
-              status: "active",
-              location: { lat: 27.7172, lng: 85.3240 },
-              details: "Stolen phone map alert test near Kathmandu Durbar Square.",
-              createdAt: new Date().toISOString(),
+          try {
+            const list: EmergencyAlert[] = JSON.parse(localEList);
+            if (Array.isArray(list)) {
+              setEmergencies(list);
             }
-          ];
-          setEmergencies(defaultEmergencies);
-          localStorage.setItem("khoji_all_emergencies", JSON.stringify(defaultEmergencies));
-          addLog("Loaded default dispatch channel.");
+          } catch {}
         }
       }
     );
@@ -345,7 +406,15 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => syncDatabase()}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-emerald-300 bg-emerald-950/80 hover:bg-emerald-900 transition rounded-lg border border-emerald-700/60 shadow-sm"
+            title="Refresh active users and emergencies directly from Firestore"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Sync Live DB</span>
+          </button>
           <div className="text-right hidden sm:block">
             <span className="text-xs font-bold text-red-400 uppercase tracking-widest font-mono">SUPER USER</span>
             <p className="text-sm font-semibold text-slate-100">{adminUser.fullName}</p>
