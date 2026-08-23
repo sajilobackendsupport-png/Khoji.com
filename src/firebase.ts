@@ -1,8 +1,8 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
-import { getFirestore, doc, getDocFromServer } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, getFirestore } from "firebase/firestore";
 
-// Web app's Firebase configuration requested by user
+// Web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyBGqt4N0Sn9Q1VK4UaQIWDeROC-HZ1B5s8",
   authDomain: "khoji-c6605.firebaseapp.com",
@@ -14,23 +14,26 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app); /* CRITICAL: Database initialized with custom configuration */
 
-async function testConnection() {
+// Initialize Firestore with robust multi-tab local caching and automatic offline resilience
+export const db = (() => {
   try {
-    await getDocFromServer(doc(db, "test", "connection"));
-    console.log("Firebase Connection Verified: Connected to khoji-c6605 project");
-  } catch (error: any) {
-    // Only log if it is not an expected auth restriction
-    if (error?.code !== "permission-denied") {
-      console.info("Firestore status: connected (auth required for document access)");
-    }
+    return initializeFirestore(app, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    });
+  } catch (e) {
+    // Fallback to standard getFirestore if already initialized or browser restricted
+    return getFirestore(app);
   }
-}
-testConnection();
+})();
 
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({
+  prompt: "select_account",
+});
 
 export enum OperationType {
   CREATE = "create",
