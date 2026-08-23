@@ -4,7 +4,7 @@ import { collection, doc, updateDoc, onSnapshot, query, where, getDocs } from "f
 import { db, handleFirestoreError, OperationType } from "../firebase";
 import { Shield, Users, Radio, MapPin, AlertTriangle, Phone, CheckSquare, Search, RefreshCw, Layers } from "lucide-react";
 import TrackingMap from "./TrackingMap";
-import { NEPAL_EMERGENCY_CONTACTS } from "../utils/nepalContacts";
+import { LOCATION_EMERGENCY_CONTACTS } from "../utils/nepalContacts";
 
 interface AdminDashboardProps {
   adminUser: UserProfile;
