@@ -33,6 +33,7 @@ import {
   Users,
 } from "lucide-react";
 import TrackingMap from "./TrackingMap";
+import { soundEngine } from "../utils/alertSound";
 
 interface UserDashboardProps {
   user: UserProfile;
@@ -426,6 +427,7 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
 
     const targetStatus: UserStatus = type === "lost" ? "lost" : "emergency";
     setStatus(targetStatus);
+    soundEngine.playEmergencySiren(4);
 
     try {
       await addDoc(collection(db, "emergencies"), newAlert);

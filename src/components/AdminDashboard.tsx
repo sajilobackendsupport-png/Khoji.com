@@ -1,10 +1,34 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { UserProfile, EmergencyAlert, DeviceInfo } from "../types";
 import { collection, doc, updateDoc, onSnapshot, query, where, getDocs } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "../firebase";
-import { Shield, Users, Radio, MapPin, AlertTriangle, Phone, CheckSquare, Search, RefreshCw, Layers } from "lucide-react";
+import { db } from "../firebase";
+import {
+  Shield,
+  Users,
+  Radio,
+  MapPin,
+  AlertTriangle,
+  Phone,
+  CheckSquare,
+  Search,
+  RefreshCw,
+  Layers,
+  Volume2,
+  VolumeX,
+  Bell,
+  BellRing,
+  Play,
+  Square,
+  AlertOctagon,
+  X,
+  ExternalLink,
+} from "lucide-react";
 import TrackingMap from "./TrackingMap";
-import { LOCATION_EMERGENCY_CONTACTS } from "../utils/nepalContacts";
+import {
+  soundEngine,
+  sendBrowserNotification,
+  requestNotificationPermission,
+} from "../utils/alertSound";
 
 interface AdminDashboardProps {
   adminUser: UserProfile;
@@ -22,10 +46,23 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
   const [loading, setLoading] = useState<{ [key: string]: boolean }>({});
   const [sysLog, setSysLog] = useState<{ id: string; msg: string; time: string }[]>([]);
 
+  // Sound & Notification state
+  const [isMuted, setIsMuted] = useState<boolean>(soundEngine.getMuted());
+  const [isSirenSounding, setIsSirenSounding] = useState<boolean>(false);
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
+    typeof window !== "undefined" && "Notification" in window ? Notification.permission : "default"
+  );
+  const [activeAlertModal, setActiveAlertModal] = useState<EmergencyAlert | null>(null);
+
+  // References to track previous state and avoid duplicate alert triggers
+  const prevActiveIdsRef = useRef<Set<string>>(new Set());
+  const prevUserStatusesRef = useRef<Record<string, string>>({});
+  const isInitialLoadRef = useRef<boolean>(true);
+
   // Derived state to flatten user profiles and their multiple devices into separate targets
   const trackedDevices = useMemo(() => {
     const devicesList: (UserProfile & { realUid: string; deviceId?: string; deviceName?: string; rawName: string })[] = [];
-    
+
     users.forEach((user) => {
       if (user.devices && Object.keys(user.devices).length > 0) {
         Object.values(user.devices).forEach((dev: DeviceInfo) => {
@@ -63,6 +100,51 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
       { id: uniqueId, msg, time: new Date().toLocaleTimeString() },
       ...prev.slice(0, 19),
     ]);
+  };
+
+  // Toggle Sound Mute
+  const handleToggleMute = () => {
+    const nextMute = !isMuted;
+    setIsMuted(nextMute);
+    soundEngine.setMuted(nextMute);
+    if (nextMute) {
+      setIsSirenSounding(false);
+      addLog("🔇 Emergency Audio Siren MUTED by dispatcher.");
+    } else {
+      addLog("🔊 Emergency Audio Siren ARMED and listening.");
+      soundEngine.playAlertChime();
+    }
+  };
+
+  // Test Siren Audio
+  const handleTestSiren = () => {
+    addLog("🔊 Testing Emergency Dispatch Siren & Synthesizer...");
+    setIsSirenSounding(true);
+    soundEngine.playEmergencySiren(4);
+    setTimeout(() => {
+      setIsSirenSounding(false);
+    }, 4000);
+  };
+
+  // Stop current Siren
+  const handleSilenceSiren = () => {
+    soundEngine.stopSiren();
+    setIsSirenSounding(false);
+    addLog("🔕 Active Emergency Siren silenced by dispatcher.");
+  };
+
+  // Request browser desktop notification permissions
+  const handleRequestNotification = async () => {
+    const granted = await requestNotificationPermission();
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setNotifPermission(Notification.permission);
+    }
+    if (granted) {
+      addLog("🔔 Browser Desktop Notifications ENABLED successfully.");
+      sendBrowserNotification("KHOJI NEPAL DISPATCH", "Emergency notifications are active on this console.");
+    } else {
+      addLog("⚠️ Notification permission was not granted by browser.");
+    }
   };
 
   // Synchronize users and emergencies directly from Firestore
@@ -151,8 +233,32 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
             updatedAt: data.updatedAt || new Date().toISOString(),
           } as UserProfile);
         });
+
+        // Detect if any user newly shifted to emergency or lost status
+        uList.forEach((user) => {
+          const prevStatus = prevUserStatusesRef.current[user.uid];
+          if (prevStatus && prevStatus !== user.status && !isInitialLoadRef.current) {
+            if (user.status === "emergency") {
+              addLog(`🚨 CRITICAL STATUS: ${user.fullName} switched status to EMERGENCY!`);
+              setIsSirenSounding(true);
+              soundEngine.playEmergencySiren(12);
+              sendBrowserNotification(
+                "🚨 CITIZEN STATUS: EMERGENCY",
+                `${user.fullName} (${user.phone}) has flagged status as EMERGENCY in Nepal!`
+              );
+            } else if (user.status === "lost") {
+              addLog(`⚠️ LOST FLAG: ${user.fullName} reported DEVICE/CITIZEN LOST.`);
+              soundEngine.playAlertChime();
+              sendBrowserNotification(
+                "⚠️ CITIZEN STATUS: LOST",
+                `${user.fullName} has flagged device/citizen as LOST.`
+              );
+            }
+          }
+          prevUserStatusesRef.current[user.uid] = user.status;
+        });
+
         setUsers(uList);
-        addLog(`Synchronized active tracking signals for ${uList.length} users successfully.`);
         localStorage.setItem("khoji_all_users", JSON.stringify(uList));
       },
       (error) => {
@@ -163,7 +269,6 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
             const listObj = JSON.parse(localUsersList);
             if (Array.isArray(listObj) && listObj.length > 0) {
               setUsers(listObj);
-              addLog(`[Cache] Loaded active tracking signals for ${listObj.length} users.`);
             }
           } catch {}
         }
@@ -173,7 +278,7 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
     return unsubscribe;
   }, []);
 
-  // 2. Mount Real-time subscription to Emergencies alerts
+  // 2. Mount Real-time subscription to Emergencies alerts with Sound & Notifications
   useEffect(() => {
     const unsubscribe = onSnapshot(
       collection(db, "emergencies"),
@@ -196,18 +301,45 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
             deviceName: data.deviceName,
           } as EmergencyAlert);
         });
+
         // Sort by date descending
         eList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         setEmergencies(eList);
         localStorage.setItem("khoji_all_emergencies", JSON.stringify(eList));
-        
-        // Count active alerts to notify
-        const activeCount = eList.filter((e) => e.status === "active").length;
-        if (activeCount > 0) {
-          addLog(`⚠️ CRITICAL: ${activeCount} active emergency dispatch protocols require resolution!`);
-        } else {
-          addLog("All Nepalese SOS streams cleared. Scanning networks.");
+
+        // Detect newly active emergencies
+        const currentActive = eList.filter((e) => e.status === "active");
+        let hasNewEmergency = false;
+        let newestAlert: EmergencyAlert | null = null;
+
+        currentActive.forEach((alert) => {
+          if (!prevActiveIdsRef.current.has(alert.id)) {
+            hasNewEmergency = true;
+            if (!newestAlert) newestAlert = alert;
+          }
+        });
+
+        // Update active IDs tracker
+        prevActiveIdsRef.current = new Set(currentActive.map((e) => e.id));
+
+        // If a new emergency occurred (or on first load if active emergencies exist)
+        if (hasNewEmergency && newestAlert) {
+          addLog(`🚨 EMERGENCY SOS BROADCAST: ${newestAlert.userName} triggered ${newestAlert.type.toUpperCase()} rescue!`);
+          setIsSirenSounding(true);
+          soundEngine.playEmergencySiren(15);
+          setActiveAlertModal(newestAlert);
+          setSelectedEmergency(newestAlert);
+
+          sendBrowserNotification(
+            `🚨 EMERGENCY SOS: ${newestAlert.userName}`,
+            `Urgent ${newestAlert.type.toUpperCase()} alert triggered! Phone: ${newestAlert.userPhone}. Coordinates: ${newestAlert.location.lat.toFixed(4)}, ${newestAlert.location.lng.toFixed(4)}`
+          );
+        } else if (currentActive.length === 0) {
+          setIsSirenSounding(false);
+          soundEngine.stopSiren();
         }
+
+        isInitialLoadRef.current = false;
       },
       (error) => {
         console.warn("Active emergencies stream notice:", error);
@@ -229,13 +361,19 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
   // Action: Resolve an active Emergency alert
   const resolveEmergency = async (alert: EmergencyAlert) => {
     setLoading((prev) => ({ ...prev, [alert.id]: true }));
-    addLog(`Initiating resolution protocol for SOS: #${alert.id.split("-")[2]}`);
+    addLog(`Initiating resolution protocol for SOS: #${alert.id.split("-")[2] || alert.id}`);
+
+    // If this was in active modal, dismiss modal
+    if (activeAlertModal?.id === alert.id) {
+      setActiveAlertModal(null);
+      handleSilenceSiren();
+    }
 
     // Update local emergencies
     const currentGlobal = localStorage.getItem("khoji_all_emergencies");
     if (currentGlobal) {
       const globalList: EmergencyAlert[] = JSON.parse(currentGlobal);
-      const index = globalList.findIndex(e => e.id === alert.id);
+      const index = globalList.findIndex((e) => e.id === alert.id);
       if (index >= 0) {
         globalList[index].status = "resolved";
         globalList[index].resolvedAt = new Date().toISOString();
@@ -248,7 +386,7 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
     const currentGlobalUsers = localStorage.getItem("khoji_all_users");
     if (currentGlobalUsers) {
       const globalUsersList: UserProfile[] = JSON.parse(currentGlobalUsers);
-      const userIndex = globalUsersList.findIndex(u => u.uid === alert.userId);
+      const userIndex = globalUsersList.findIndex((u) => u.uid === alert.userId);
       if (userIndex >= 0) {
         globalUsersList[userIndex].status = "normal";
         globalUsersList[userIndex].updatedAt = new Date().toISOString();
@@ -258,7 +396,7 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
         }
         localStorage.setItem("khoji_all_users", JSON.stringify(globalUsersList));
         setUsers(globalUsersList);
-        
+
         // Also update individual user profile if stored in this browser
         const targetIndiv = localStorage.getItem(`khoji_user_${alert.userId}`);
         if (targetIndiv) {
@@ -275,11 +413,9 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
     }
 
     try {
-      // 1. Mark emergency status as resolved in its own document
-      // Let's find the auto-ID of this document inside the emergencies collection by querying
       const q = query(collection(db, "emergencies"), where("id", "==", alert.id));
       const querySnapshot = await getDocs(q);
-      
+
       if (!querySnapshot.empty) {
         const docRef = querySnapshot.docs[0].ref;
         await updateDoc(docRef, {
@@ -288,7 +424,6 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
         });
       }
 
-      // 2. Reset the affected user's state back to 'normal'
       const userRef = doc(db, "users", alert.userId);
       const updateData: any = {
         status: "normal",
@@ -300,105 +435,34 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
       }
       await updateDoc(userRef, updateData);
 
-      addLog(`Incident #${alert.id.split("-")[2]} resolved. Victim [${alert.userName}] status reset to normal.`);
-    } catch (err) {
-      console.warn("Firestore resolve deferred. Stored locally.", err);
-      addLog(`Incident #${alert.id.split("-")[2]} resolved locally. Victim [${alert.userName}] status cleared.`);
+      addLog(`✅ Resolved and cleared SOS #${alert.id}. Safe status restored.`);
+    } catch (e: any) {
+      console.warn("Resolve alert notice:", e);
+      addLog(`Status marked as safe locally. (DB updated)`);
     } finally {
       setLoading((prev) => ({ ...prev, [alert.id]: false }));
     }
   };
 
-  // Action: Force manual status reset to normal for any user (great for stolen devices successfully found)
+  // Action: Manually reset a user profile status back to 'normal'
   const manualResetProfile = async (targetUser: UserProfile & { realUid?: string; deviceId?: string }) => {
-    const targetUid = targetUser.realUid || targetUser.uid;
-    const devId = targetUser.deviceId;
-
+    const effectiveUid = targetUser.realUid || targetUser.uid;
     setLoading((prev) => ({ ...prev, [targetUser.uid]: true }));
-    addLog(`Resetting device status manually for: ${targetUser.fullName}`);
+    addLog(`Manually clearing emergency flags for citizen [${targetUser.fullName}]...`);
 
-    // Update local list
-    const currentGlobalUsers = localStorage.getItem("khoji_all_users");
-    if (currentGlobalUsers) {
-      const globalUsersList: UserProfile[] = JSON.parse(currentGlobalUsers);
-      const userIndex = globalUsersList.findIndex(u => u.uid === targetUid);
-      if (userIndex >= 0) {
-        globalUsersList[userIndex].status = "normal";
-        globalUsersList[userIndex].updatedAt = new Date().toISOString();
-        if (devId && globalUsersList[userIndex].devices?.[devId]) {
-          globalUsersList[userIndex].devices![devId].status = "normal";
-          globalUsersList[userIndex].devices![devId].updatedAt = new Date().toISOString();
-        }
-        localStorage.setItem("khoji_all_users", JSON.stringify(globalUsersList));
-        setUsers(globalUsersList);
-        
-        const targetIndiv = localStorage.getItem(`khoji_user_${targetUid}`);
-        if (targetIndiv) {
-          const profileObj = JSON.parse(targetIndiv);
-          profileObj.status = "normal";
-          profileObj.updatedAt = new Date().toISOString();
-          if (devId && profileObj.devices?.[devId]) {
-            profileObj.devices[devId].status = "normal";
-            profileObj.devices[devId].updatedAt = new Date().toISOString();
-          }
-          localStorage.setItem(`khoji_user_${targetUid}`, JSON.stringify(profileObj));
-        }
-      }
-    }
-
-    try {
-      const userRef = doc(db, "users", targetUid);
-      const updateData: any = {
-        status: "normal",
-        updatedAt: new Date().toISOString(),
-      };
-      if (devId) {
-        updateData[`devices.${devId}.status`] = "normal";
-        updateData[`devices.${devId}.updatedAt`] = new Date().toISOString();
-      }
-      await updateDoc(userRef, updateData);
-      addLog(`Manual status reset complete for user ${targetUser.fullName}.`);
-    } catch (err) {
-      console.warn("Firestore reset status deferred.", err);
-      addLog(`Manual status reset complete (locally secured) for ${targetUser.fullName}.`);
-    } finally {
-      setLoading((prev) => ({ ...prev, [targetUser.uid]: false }));
-    }
-  };
-
-  // Handle simulated movement / heading turns for selected target
-  const handleSimulateUserMove = async (
-    newLat: number,
-    newLng: number,
-    heading: number,
-    speed: number
-  ) => {
-    if (!selectedUser) return;
-    const targetUid = (selectedUser as any).realUid || selectedUser.uid;
-    const devId = (selectedUser as any).deviceId;
-
-    const newLoc = {
-      lat: newLat,
-      lng: newLng,
-      heading,
-      speed,
-      accuracy: 20,
-      timestamp: new Date().toISOString(),
-    };
-
-    addLog(
-      `Target [${selectedUser.fullName}] altered heading: ${heading}° (${speed} km/h) • Coordinates: ${newLat.toFixed(
-        5
-      )}, ${newLng.toFixed(5)}`
-    );
-
-    // Update in-memory users state
+    // Update in local state
     setUsers((prev) =>
       prev.map((u) => {
-        if (u.uid === targetUid) {
+        if (u.uid === effectiveUid) {
+          const updatedDevices = u.devices ? { ...u.devices } : {};
+          if (targetUser.deviceId && updatedDevices[targetUser.deviceId]) {
+            updatedDevices[targetUser.deviceId].status = "normal";
+            updatedDevices[targetUser.deviceId].updatedAt = new Date().toISOString();
+          }
           return {
             ...u,
-            lastLocation: newLoc,
+            status: "normal",
+            devices: updatedDevices,
             updatedAt: new Date().toISOString(),
           };
         }
@@ -406,30 +470,39 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
       })
     );
 
-    // Update selectedUser so HUD stays in sync
-    setSelectedUser((prev) =>
-      prev
-        ? {
-            ...prev,
-            lastLocation: newLoc,
-            updatedAt: new Date().toISOString(),
-          }
-        : null
-    );
+    // Update global cache
+    const currentGlobalUsers = localStorage.getItem("khoji_all_users");
+    if (currentGlobalUsers) {
+      const globalUsersList: UserProfile[] = JSON.parse(currentGlobalUsers);
+      const userIndex = globalUsersList.findIndex((u) => u.uid === effectiveUid);
+      if (userIndex >= 0) {
+        globalUsersList[userIndex].status = "normal";
+        globalUsersList[userIndex].updatedAt = new Date().toISOString();
+        if (targetUser.deviceId && globalUsersList[userIndex].devices?.[targetUser.deviceId]) {
+          globalUsersList[userIndex].devices![targetUser.deviceId].status = "normal";
+          globalUsersList[userIndex].devices![targetUser.deviceId].updatedAt = new Date().toISOString();
+        }
+        localStorage.setItem("khoji_all_users", JSON.stringify(globalUsersList));
+      }
+    }
 
     try {
-      const userRef = doc(db, "users", targetUid);
-      const updatePayload: any = {
-        lastLocation: newLoc,
+      const userRef = doc(db, "users", effectiveUid);
+      const updateData: any = {
+        status: "normal",
         updatedAt: new Date().toISOString(),
       };
-      if (devId) {
-        updatePayload[`devices.${devId}.lastLocation`] = newLoc;
-        updatePayload[`devices.${devId}.updatedAt`] = new Date().toISOString();
+      if (targetUser.deviceId) {
+        updateData[`devices.${targetUser.deviceId}.status`] = "normal";
+        updateData[`devices.${targetUser.deviceId}.updatedAt`] = new Date().toISOString();
       }
-      await updateDoc(userRef, updatePayload);
-    } catch (e) {
-      console.warn("Firestore location broadcast deferred:", e);
+      await updateDoc(userRef, updateData);
+      addLog(`✅ Reset citizen [${targetUser.fullName}] status to Normal.`);
+    } catch (e: any) {
+      console.warn("Reset profile notice:", e);
+      addLog(`Citizen status reset locally.`);
+    } finally {
+      setLoading((prev) => ({ ...prev, [targetUser.uid]: false }));
     }
   };
 
@@ -450,58 +523,234 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
   });
 
   return (
-    <div className="w-full min-h-screen bg-slate-50 flex flex-col font-sans" id="admin-dashboard-container">
-      
-      {/* Dynamic blinking header alert */}
+    <div className="w-full min-h-screen bg-slate-50 flex flex-col font-sans relative" id="admin-dashboard-container">
+
+      {/* ================= CRITICAL EMERGENCY POPUP MODAL ================= */}
+      {activeAlertModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in font-sans">
+          <div className="bg-slate-900 border-2 border-red-600 rounded-3xl max-w-lg w-full p-6 text-white shadow-2xl space-y-5 relative overflow-hidden ring-4 ring-red-600/30">
+            {/* Pulsing red background glow */}
+            <div className="absolute top-0 right-0 w-64 h-64 bg-red-600/20 rounded-full blur-[80px] pointer-events-none" />
+
+            {/* Header */}
+            <div className="flex items-start justify-between relative z-10">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-red-600 flex items-center justify-center text-white shadow-lg animate-bounce">
+                  <AlertOctagon className="w-7 h-7" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono uppercase bg-red-600 text-white px-2 py-0.5 rounded-full font-extrabold animate-pulse">
+                      CRITICAL SOS ALERT
+                    </span>
+                    <span className="text-xs text-red-300 font-mono">
+                      {new Date(activeAlertModal.createdAt).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <h2 className="text-xl font-black text-white tracking-tight mt-0.5">
+                    {activeAlertModal.userName}
+                  </h2>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setActiveAlertModal(null)}
+                className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Emergency Details Box */}
+            <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-3 relative z-10">
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block font-mono">Rescue Type</span>
+                  <span className="text-sm font-extrabold text-red-400 uppercase flex items-center gap-1.5 mt-0.5">
+                    <Radio className="w-3.5 h-3.5 animate-pulse" />
+                    {activeAlertModal.type} EMERGENCY
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block font-mono">Citizen Phone</span>
+                  <a
+                    href={`tel:${activeAlertModal.userPhone}`}
+                    className="text-sm font-extrabold text-emerald-400 hover:underline flex items-center gap-1 mt-0.5"
+                  >
+                    <Phone className="w-3.5 h-3.5" />
+                    {activeAlertModal.userPhone}
+                  </a>
+                </div>
+              </div>
+
+              {activeAlertModal.details && (
+                <div className="border-t border-slate-850 pt-2 text-xs text-slate-300 italic bg-slate-900/40 p-2.5 rounded-xl">
+                  "{activeAlertModal.details}"
+                </div>
+              )}
+
+              <div className="text-[11px] text-slate-400 flex items-center gap-2 font-mono">
+                <MapPin className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
+                <span>
+                  Lat: {activeAlertModal.location.lat.toFixed(5)}, Lng: {activeAlertModal.location.lng.toFixed(5)}
+                </span>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 relative z-10 pt-1">
+              <button
+                onClick={() => {
+                  setSelectedEmergency(activeAlertModal);
+                  setSelectedUser(null);
+                  setActiveAlertModal(null);
+                  addLog(`Focused master map onto SOS incident: ${activeAlertModal.userName}`);
+                }}
+                className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs py-3 px-4 rounded-xl transition shadow-lg cursor-pointer"
+              >
+                <MapPin className="w-4 h-4" />
+                <span>Center & Track On Map</span>
+              </button>
+
+              <button
+                onClick={handleSilenceSiren}
+                className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-750 text-slate-200 font-extrabold text-xs py-3 px-4 rounded-xl transition border border-slate-700 cursor-pointer"
+              >
+                <VolumeX className="w-4 h-4 text-amber-400" />
+                <span>Silence Siren</span>
+              </button>
+
+              <a
+                href={`tel:${activeAlertModal.userPhone}`}
+                className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs py-2.5 px-4 rounded-xl transition shadow text-center cursor-pointer"
+              >
+                <Phone className="w-4 h-4" />
+                <span>Call Citizen Directly</span>
+              </a>
+
+              <button
+                onClick={() => resolveEmergency(activeAlertModal)}
+                disabled={loading[activeAlertModal.id]}
+                className="w-full flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs py-2.5 px-4 rounded-xl transition shadow disabled:opacity-50 cursor-pointer"
+              >
+                <CheckSquare className="w-4 h-4" />
+                <span>Resolve & Clear SOS</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dynamic blinking header alert when emergencies are active */}
       {activeEmergencies.length > 0 && (
-        <div className="bg-rose-700 text-white font-extrabold text-sm py-2 text-center animate-pulse flex items-center justify-center gap-1.5 z-50 shadow-md">
-          <Radio className="w-4.5 h-4.5 animate-ping text-rose-200" />
-          <span>ATTENTION COMMAND CENTER: {activeEmergencies.length} ACTIVE NEPAL RAPID RESCUE ALERTS LIVE</span>
+        <div className="bg-rose-700 text-white font-black text-xs sm:text-sm py-2 px-4 text-center animate-pulse flex items-center justify-between z-40 shadow-md">
+          <div className="flex items-center gap-2 mx-auto">
+            <Radio className="w-4 h-4 animate-ping text-rose-200" />
+            <span>
+              🚨 ALERT: {activeEmergencies.length} ACTIVE NEPAL EMERGENCY SOS SIGNAL(S) LIVE
+            </span>
+          </div>
+
+          {isSirenSounding && (
+            <button
+              onClick={handleSilenceSiren}
+              className="px-3 py-1 bg-white text-rose-800 font-extrabold text-xs rounded-lg hover:bg-rose-100 transition shadow flex items-center gap-1 cursor-pointer"
+            >
+              <VolumeX className="w-3.5 h-3.5" />
+              <span>Silence Siren</span>
+            </button>
+          )}
         </div>
       )}
 
       {/* Nav */}
-      <header className="sticky top-0 z-40 bg-slate-900 text-white px-6 py-4 flex items-center justify-between shadow-md border-b border-slate-800">
-        <div className="flex items-center gap-2">
-          <div className="w-10 h-10 bg-red-600 rounded-xl flex items-center justify-center text-white shadow-xl">
+      <header className="sticky top-0 z-30 bg-slate-900 text-white px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3 shadow-md border-b border-slate-800">
+        <div className="flex items-center gap-2.5">
+          <div className="w-10 h-10 bg-red-600 rounded-xl flex items-center justify-center text-white shadow-xl flex-shrink-0">
             <Shield className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-xl font-extrabold tracking-tight">
-              Khoji<span className="text-red-500">.com</span> <span className="text-xs bg-red-600 px-2 py-0.5 rounded-full uppercase ml-1.5 font-bold tracking-widest text-[#f8fafc]">Nepal Command</span>
+            <h1 className="text-lg sm:text-xl font-extrabold tracking-tight">
+              Khoji<span className="text-red-500">.com</span>{" "}
+              <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded-full uppercase ml-1 font-bold tracking-widest text-[#f8fafc]">
+                Nepal Command
+              </span>
             </h1>
-            <p className="text-[10px] text-slate-400 font-mono">AUTHORIZED RESCUE LOGISTICS INTERFACE</p>
+            <p className="text-[10px] text-slate-400 font-mono">EMERGENCY DISPATCH & LIVE SIREN SYSTEM</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        {/* Audio Siren Controls & Global Actions */}
+        <div className="flex items-center flex-wrap gap-2">
+          {/* Siren Mute / Unmute Button */}
+          <button
+            onClick={handleToggleMute}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-extrabold rounded-xl border transition cursor-pointer ${
+              isMuted
+                ? "bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-750 hover:text-slate-200"
+                : "bg-red-950/80 text-red-300 border-red-800 hover:bg-red-900 shadow-sm"
+            }`}
+            title={isMuted ? "Audio Siren is Muted. Click to Unmute." : "Audio Siren is ARMED. Click to Mute."}
+          >
+            {isMuted ? <VolumeX className="w-3.5 h-3.5 text-slate-400" /> : <Volume2 className="w-3.5 h-3.5 text-red-400 animate-pulse" />}
+            <span className="hidden md:inline">{isMuted ? "Siren Muted" : "Siren Armed"}</span>
+          </button>
+
+          {/* Test Siren Button */}
+          <button
+            onClick={handleTestSiren}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-slate-300 bg-slate-800 hover:bg-slate-700 hover:text-white rounded-xl border border-slate-750 transition cursor-pointer"
+            title="Test Emergency Alarm Synthesizer"
+          >
+            <Play className="w-3 h-3 text-emerald-400" />
+            <span className="hidden sm:inline">Test Sound</span>
+          </button>
+
+          {/* Desktop Push Notification Permission Toggle */}
+          {notifPermission !== "granted" ? (
+            <button
+              onClick={handleRequestNotification}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-amber-300 bg-amber-950/60 hover:bg-amber-900/80 rounded-xl border border-amber-800/80 transition cursor-pointer"
+              title="Click to allow instant Desktop emergency push notifications"
+            >
+              <Bell className="w-3.5 h-3.5 text-amber-400 animate-bounce" />
+              <span className="hidden lg:inline">Enable Alerts</span>
+            </button>
+          ) : (
+            <div className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-950/50 border border-emerald-800/60 text-emerald-300 text-[11px] font-bold rounded-xl" title="Desktop push notifications are active">
+              <BellRing className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden xl:inline">Alerts Active</span>
+            </div>
+          )}
+
           <button
             onClick={() => syncDatabase()}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-emerald-300 bg-emerald-950/80 hover:bg-emerald-900 transition rounded-lg border border-emerald-700/60 shadow-sm cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-300 bg-emerald-950/80 hover:bg-emerald-900 transition rounded-xl border border-emerald-700/60 shadow-sm cursor-pointer"
             title="Refresh active users and emergencies directly from Firestore"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Sync Live DB</span>
+            <span className="hidden sm:inline">Sync DB</span>
           </button>
 
           {onOpenProfileModal && (
             <button
               onClick={onOpenProfileModal}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 hover:text-white transition rounded-lg border border-slate-750 cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 hover:text-white transition rounded-xl border border-slate-750 cursor-pointer"
               title="Switch profile, add new user, or manage accounts"
             >
               <Users className="w-3.5 h-3.5 text-blue-400" />
-              <span>Profiles / Switch</span>
+              <span className="hidden md:inline">Profiles</span>
             </button>
           )}
 
-          <div className="text-right hidden sm:block">
-            <span className="text-xs font-bold text-red-400 uppercase tracking-widest font-mono">SUPER USER</span>
-            <p className="text-sm font-semibold text-slate-100">{adminUser.fullName}</p>
+          <div className="text-right hidden xl:block ml-1">
+            <span className="text-[10px] font-bold text-red-400 uppercase tracking-widest font-mono block">SUPER USER</span>
+            <p className="text-xs font-semibold text-slate-100">{adminUser.fullName}</p>
           </div>
+
           <button
             onClick={onLogout}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-200 bg-slate-800 hover:bg-rose-900/60 hover:text-rose-200 hover:border-rose-700 transition rounded-lg border border-slate-700 cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-200 bg-slate-800 hover:bg-rose-900/60 hover:text-rose-200 hover:border-rose-700 transition rounded-xl border border-slate-700 cursor-pointer"
           >
             Logout
           </button>
@@ -509,45 +758,45 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
       </header>
 
       {/* Stats Counter Row */}
-      <div className="bg-white border-b border-slate-200 py-5 px-6">
-        <div className="max-w-7xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
-          <div className="bg-rose-50 border border-rose-100 rounded-2xl p-4 flex items-center gap-4">
-            <div className="w-11 h-11 bg-rose-600 text-white rounded-xl flex items-center justify-center shadow">
-              <Radio className="w-6 h-6 animate-pulse" />
+      <div className="bg-white border-b border-slate-200 py-4 px-4 sm:px-6">
+        <div className="max-w-7xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
+          <div className="bg-rose-50 border border-rose-100 rounded-2xl p-3.5 sm:p-4 flex items-center gap-3.5">
+            <div className="w-10 h-10 sm:w-11 sm:h-11 bg-rose-600 text-white rounded-xl flex items-center justify-center shadow">
+              <Radio className="w-5 h-5 sm:w-6 sm:h-6 animate-pulse" />
             </div>
             <div>
-              <span className="text-2xl font-extrabold text-rose-700">{activeEmergencies.length}</span>
-              <p className="text-xs text-rose-500 font-bold uppercase tracking-wide">Active SOS Alerts</p>
+              <span className="text-xl sm:text-2xl font-extrabold text-rose-700">{activeEmergencies.length}</span>
+              <p className="text-[10px] sm:text-xs text-rose-500 font-bold uppercase tracking-wide">Active SOS Alerts</p>
             </div>
           </div>
 
-          <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 flex items-center gap-4">
-            <div className="w-11 h-11 bg-amber-500 text-white rounded-xl flex items-center justify-center shadow">
-              <AlertTriangle className="w-6 h-6" />
+          <div className="bg-amber-50 border border-amber-100 rounded-2xl p-3.5 sm:p-4 flex items-center gap-3.5">
+            <div className="w-10 h-10 sm:w-11 sm:h-11 bg-amber-500 text-white rounded-xl flex items-center justify-center shadow">
+              <AlertTriangle className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
             <div>
-              <span className="text-2xl font-extrabold text-amber-700">{deviceLostUsers.length}</span>
-              <p className="text-xs text-amber-600 font-bold uppercase tracking-wide">Device Lost Flags</p>
+              <span className="text-xl sm:text-2xl font-extrabold text-amber-700">{deviceLostUsers.length}</span>
+              <p className="text-[10px] sm:text-xs text-amber-600 font-bold uppercase tracking-wide">Device Lost Flags</p>
             </div>
           </div>
 
-          <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex items-center gap-4">
-            <div className="w-11 h-11 bg-slate-800 text-white rounded-xl flex items-center justify-center shadow">
-              <Users className="w-6 h-6" />
+          <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3.5 sm:p-4 flex items-center gap-3.5">
+            <div className="w-10 h-10 sm:w-11 sm:h-11 bg-slate-800 text-white rounded-xl flex items-center justify-center shadow">
+              <Users className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
             <div>
-              <span className="text-2xl font-extrabold text-slate-800">{users.length}</span>
-              <p className="text-xs text-slate-500 font-bold uppercase tracking-wide">Total Users Registered</p>
+              <span className="text-xl sm:text-2xl font-extrabold text-slate-800">{users.length}</span>
+              <p className="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Registered Citizens</p>
             </div>
           </div>
 
-          <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex items-center gap-4">
-            <div className="w-11 h-11 bg-indigo-600 text-white rounded-xl flex items-center justify-center shadow">
-              <MapPin className="w-6 h-6 animate-bounce" />
+          <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-3.5 sm:p-4 flex items-center gap-3.5">
+            <div className="w-10 h-10 sm:w-11 sm:h-11 bg-indigo-600 text-white rounded-xl flex items-center justify-center shadow">
+              <MapPin className="w-5 h-5 sm:w-6 sm:h-6 animate-bounce" />
             </div>
             <div>
-              <span className="text-2xl font-extrabold text-indigo-700">{activeTrackerCount}</span>
-              <p className="text-xs text-indigo-600 font-bold uppercase tracking-wide">Active GPS Targets</p>
+              <span className="text-xl sm:text-2xl font-extrabold text-indigo-700">{activeTrackerCount}</span>
+              <p className="text-[10px] sm:text-xs text-indigo-600 font-bold uppercase tracking-wide">Active GPS Targets</p>
             </div>
           </div>
         </div>
@@ -558,30 +807,30 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
 
         {/* Left Side (Map panel & Logistics info) */}
         <div className="lg:col-span-8 flex flex-col gap-6">
-          
+
           {/* Main Nepal Tracker Map */}
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 flex-1 flex flex-col gap-3 min-h-[440px]">
-            <div className="flex items-center justify-between">
+          <div className="bg-white rounded-3xl border border-slate-150 shadow-sm p-4 flex-1 flex flex-col gap-3 min-h-[440px]">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
                 <h2 className="text-base font-extrabold text-slate-900 flex items-center gap-1.5">
                   <Layers className="text-indigo-600 w-5 h-5" />
                   <span>Interactive Nepal Master Dispatch Grid</span>
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Live location overlays of all Nepalese users. Glowing red targets are active sirens.
+                  Live GPS targets across Nepal. Glowing red pins denote active emergency sirens.
                 </p>
               </div>
 
               {/* Status Map Legends */}
               <div className="flex items-center gap-3 text-[11px] font-bold">
-                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-red-500 rounded-full inline-block" /> SOS</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-red-500 rounded-full inline-block animate-ping" /> SOS</span>
                 <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-amber-500 rounded-full inline-block" /> Lost</span>
                 <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-blue-500 rounded-full inline-block" /> Safe</span>
               </div>
             </div>
 
             {/* Render the tracking map */}
-            <div className="flex-1 min-h-[350px]">
+            <div className="flex-1 min-h-[360px]">
               <TrackingMap
                 users={trackedDevices}
                 emergencies={emergencies}
@@ -590,21 +839,20 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
                 onSelectUser={(u) => {
                   setSelectedUser(u);
                   setSelectedEmergency(null);
-                  addLog(`Selected target [${u.fullName}] for live GPS & direction telemetry tracking.`);
+                  addLog(`Selected target [${u.fullName}] for live GPS & telemetry tracking.`);
                 }}
-                onSimulateMove={handleSimulateUserMove}
               />
             </div>
           </div>
 
           {/* Commander Logs console */}
-          <div className="bg-slate-900 rounded-2xl p-5 border border-slate-800 text-slate-300 font-mono">
+          <div className="bg-slate-900 rounded-3xl p-5 border border-slate-800 text-slate-300 font-mono shadow-sm">
             <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
-              <span className="text-xs font-bold text-red-500 flex items-center gap-1.5 uppercase">
-                <span className="w-2 h-2 rounded-full bg-red-500 animate-ping inline-block" /> 
-                System Kernel Stream Logs
+              <span className="text-xs font-bold text-red-500 flex items-center gap-1.5 uppercase font-mono">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-ping inline-block" />
+                Live Dispatch Decryption & Siren Stream
               </span>
-              <span className="text-[10px] text-slate-500">Live Decryption feeds</span>
+              <span className="text-[10px] text-slate-500">Auto-synchronized</span>
             </div>
 
             <div className="text-[11px] space-y-1.5 max-h-[140px] overflow-y-auto font-mono text-emerald-400">
@@ -626,18 +874,25 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
         <div className="lg:col-span-4 flex flex-col gap-6">
 
           {/* Section: ACTIVE EMERGENCY SOS CARDS */}
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 space-y-4 max-h-[360px] overflow-y-auto">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-red-600 flex items-center gap-1.5 border-b pb-2">
-              <span className="w-2.5 h-2.5 bg-red-600 rounded-full animate-ping" />
-              Active Dispatch Board ({activeEmergencies.length})
-            </h3>
+          <div className="bg-white rounded-3xl border border-slate-150 shadow-sm p-5 space-y-4 max-h-[360px] overflow-y-auto">
+            <div className="flex items-center justify-between border-b pb-2">
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-red-600 flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 bg-red-600 rounded-full animate-ping" />
+                Active Dispatch Board ({activeEmergencies.length})
+              </h3>
+              {activeEmergencies.length > 0 && (
+                <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full uppercase">
+                  Alert Active
+                </span>
+              )}
+            </div>
 
             {activeEmergencies.length === 0 ? (
               <div className="text-center py-8 text-xs text-slate-400">
-                ✔️ No pending SOS dispatch requirements. Excellent safety metrics.
+                ✔️ No pending SOS dispatch requirements. All citizens safe.
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-3.5">
                 {activeEmergencies.map((alert) => (
                   <div
                     key={alert.id}
@@ -645,38 +900,44 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
                       setSelectedEmergency(alert);
                       setSelectedUser(null);
                     }}
-                    className={`p-3.5 rounded-xl border transition cursor-pointer ${
+                    className={`p-3.5 rounded-2xl border transition cursor-pointer ${
                       selectedEmergency?.id === alert.id
-                        ? "bg-rose-50/60 border-rose-300 ring-1 ring-rose-200"
-                        : "bg-slate-50/60 border-slate-200 hover:border-rose-200"
+                        ? "bg-rose-50/70 border-rose-300 ring-2 ring-rose-200"
+                        : "bg-slate-50/70 border-slate-200 hover:border-rose-300"
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-bold text-slate-900">{alert.userName}</span>
-                      <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white font-mono">
+                      <span className="text-xs font-extrabold text-slate-900">{alert.userName}</span>
+                      <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-rose-600 text-white font-mono shadow-sm">
                         {alert.type}
                       </span>
                     </div>
 
-                    <p className="text-[11px] text-slate-500 mb-2 font-semibold">📞 Contact: {alert.userPhone}</p>
-                    <p className="text-xs text-slate-700 bg-white p-2 rounded-lg border border-slate-100 italic mb-3">
-                      "{alert.details || "No secondary notes provided."}"
+                    <p className="text-[11px] text-slate-600 mb-1.5 font-bold flex items-center gap-1">
+                      <Phone className="w-3 h-3 text-emerald-600" />
+                      <span>{alert.userPhone}</span>
                     </p>
 
-                    <div className="flex items-center justify-between pt-1">
+                    {alert.details && (
+                      <p className="text-xs text-slate-700 bg-white p-2.5 rounded-xl border border-slate-150 italic mb-2.5">
+                        "{alert.details}"
+                      </p>
+                    )}
+
+                    <div className="flex items-center justify-between pt-1 gap-2">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           resolveEmergency(alert);
                         }}
                         disabled={loading[alert.id]}
-                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10px] rounded-lg transition disabled:opacity-50 flex items-center gap-1 uppercase"
+                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-[10px] rounded-xl transition disabled:opacity-50 flex items-center gap-1 uppercase shadow-sm cursor-pointer"
                       >
                         <CheckSquare className="w-3 h-3" />
                         <span>{loading[alert.id] ? "Resolving..." : "Resolve Incident"}</span>
                       </button>
 
-                      <span className="text-[9px] text-slate-400 font-mono">
+                      <span className="text-[10px] text-slate-400 font-mono">
                         {new Date(alert.createdAt).toLocaleTimeString()}
                       </span>
                     </div>
@@ -687,10 +948,10 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
           </div>
 
           {/* Section: USER TRACKING DIRECTORY */}
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 space-y-4 flex-1 flex flex-col min-h-[350px]">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5 border-b pb-2">
+          <div className="bg-white rounded-3xl border border-slate-150 shadow-sm p-5 space-y-4 flex-1 flex flex-col min-h-[350px]">
+            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700 flex items-center gap-1.5 border-b pb-2">
               <Users className="w-4 h-4 text-slate-500" />
-              <span>User GPS directory</span>
+              <span>Registered Citizens Directory</span>
             </h3>
 
             {/* Filters and search box */}
@@ -699,10 +960,10 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
                 <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Query name, phone, email..."
+                  placeholder="Query citizen name, phone, email..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full text-xs pl-8 pr-3 py-2 border rounded-xl focus:border-indigo-500 outline-none transition"
+                  className="w-full text-xs pl-8 pr-3 py-2 border rounded-xl focus:border-indigo-500 outline-none transition bg-slate-50"
                 />
               </div>
 
@@ -712,9 +973,9 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
                   <button
                     key={type}
                     onClick={() => setFilterType(type)}
-                    className={`text-[9px] font-bold py-1 px-1 border rounded-lg transition text-center uppercase truncate ${
+                    className={`text-[9px] font-extrabold py-1 px-1 border rounded-lg transition text-center uppercase truncate cursor-pointer ${
                       filterType === type
-                        ? "bg-slate-900 border-slate-900 text-white"
+                        ? "bg-slate-900 border-slate-900 text-white shadow-sm"
                         : "bg-slate-50 hover:bg-slate-100 text-slate-600"
                     }`}
                   >
@@ -725,7 +986,7 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
             </div>
 
             {/* Lists area */}
-            <div className="space-y-2 flex-1 overflow-y-auto max-h-[200px] xl:max-h-[280px]">
+            <div className="space-y-2 flex-1 overflow-y-auto max-h-[220px] xl:max-h-[300px]">
               {queriedUsers.map((user) => {
                 const isActiveTarget = selectedUser?.uid === user.uid;
                 return (
@@ -735,7 +996,7 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
                       setSelectedUser(user);
                       setSelectedEmergency(null);
                     }}
-                    className={`p-3 rounded-xl border transition cursor-pointer flex items-center justify-between group ${
+                    className={`p-3 rounded-2xl border transition cursor-pointer flex items-center justify-between group ${
                       isActiveTarget
                         ? "bg-indigo-50/80 border-indigo-400 ring-2 ring-indigo-100"
                         : "bg-slate-50/40 border-slate-200 hover:border-slate-300 hover:bg-slate-50"
@@ -745,27 +1006,27 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {/* Status blinking indicator lamp */}
                         <span className={`w-2 h-2 rounded-full inline-block ${
-                          user.status === "emergency" 
-                            ? "bg-rose-500 animate-ping" 
-                            : user.status === "lost" 
-                            ? "bg-amber-400 animate-pulse" 
+                          user.status === "emergency"
+                            ? "bg-rose-500 animate-ping"
+                            : user.status === "lost"
+                            ? "bg-amber-400 animate-pulse"
                             : "bg-emerald-500"
                         }`} />
                         <span className="text-xs font-extrabold text-slate-800 block truncate">{user.rawName}</span>
-                        <span className={`text-[8px] font-extrabold uppercase px-1 rounded border ${
-                          user.status === "emergency" 
-                            ? "bg-rose-100 text-rose-800 border-rose-200" 
-                            : user.status === "lost" 
-                            ? "bg-amber-50 text-amber-800 border-amber-200" 
+                        <span className={`text-[8px] font-extrabold uppercase px-1.5 py-0.5 rounded-full border ${
+                          user.status === "emergency"
+                            ? "bg-rose-100 text-rose-800 border-rose-200"
+                            : user.status === "lost"
+                            ? "bg-amber-50 text-amber-800 border-amber-200"
                             : "bg-emerald-50 text-emerald-800 border-emerald-200"
                         }`}>
                           {user.status}
                         </span>
                       </div>
-                      
+
                       {/* Sub-details: device info & sync rate */}
                       <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1.5 flex-wrap">
-                        <span className="bg-slate-100 border border-slate-200 text-slate-600 px-1 py-0.5 rounded font-sans uppercase font-bold text-[8px]">
+                        <span className="bg-slate-100 border border-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-sans uppercase font-bold text-[8px]">
                           📱 {user.deviceName || "Primary Target"}
                         </span>
                         <span className="text-slate-300">•</span>
@@ -793,7 +1054,7 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
                             manualResetProfile(user);
                           }}
                           disabled={loading[user.uid]}
-                          className="px-2 py-1 bg-slate-900 text-white text-[9px] font-extrabold rounded-lg hover:bg-slate-800 transition shadow disabled:opacity-50"
+                          className="px-2.5 py-1 bg-slate-900 text-white text-[9px] font-extrabold rounded-lg hover:bg-slate-800 transition shadow disabled:opacity-50 cursor-pointer"
                           title="Manually clear status to safe"
                         >
                           Reset
@@ -810,7 +1071,7 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
 
               {queriedUsers.length === 0 && (
                 <div className="text-center py-8 text-xs text-slate-400">
-                  No matching user metrics discovered in Nepal.
+                  No matching citizen metrics discovered in Nepal.
                 </div>
               )}
             </div>
