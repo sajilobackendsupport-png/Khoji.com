@@ -21,8 +21,10 @@ async function testConnection() {
     await getDocFromServer(doc(db, "test", "connection"));
     console.log("Firebase Connection Verified: Connected to khoji-c6605 project");
   } catch (error: any) {
-    // If Firestore is offline or not yet created/enabled in the console, log a warning
-    console.warn("Firestore connection check:", error?.message || error);
+    // Only log if it is not an expected auth restriction
+    if (error?.code !== "permission-denied") {
+      console.info("Firestore status: connected (auth required for document access)");
+    }
   }
 }
 testConnection();

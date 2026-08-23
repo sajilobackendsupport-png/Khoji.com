@@ -46,11 +46,17 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
     setLoading(true);
     setError(null);
 
-    if (username.trim() === "Khoji@2026" && password.trim() === "Khoji@9708547685") {
+    const userClean = username.trim();
+    const passClean = password.trim();
+
+    if (
+      (userClean === "sajilo@111" && passClean === "Nepal@111") ||
+      (userClean === "Khoji@2026" && passClean === "Khoji@9708547685")
+    ) {
       onSandboxToggle("legacy-demo", "admin");
     } else {
       setError(
-        "❌ Access Denied: Invalid Command Center credentials. Please use the requested Username: Khoji@2026 and Password: Khoji@9708547685 for full Dispatch Admin authority."
+        "❌ Access Denied: Invalid credentials. Authorized Admin: Username 'sajilo@111' with Password 'Nepal@111'."
       );
       setLoading(false);
     }
@@ -95,7 +101,7 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
               <input
                 type="text"
                 required
-                placeholder="e.g. Khoji@2026"
+                placeholder="e.g. sajilo@111"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full text-xs pl-10 pr-4 py-3 bg-slate-900/60 border border-slate-800 text-white rounded-xl focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 transition font-sans text-slate-100"

@@ -44,3 +44,6 @@ export const NEPAL_EMERGENCY_CONTACTS: NepalEmergencyContact[] = [
     location: "Maharajgunj, Kathmandu",
   },
 ];
+
+export const LOCATION_EMERGENCY_CONTACTS = NEPAL_EMERGENCY_CONTACTS;
+

@@ -35,6 +35,11 @@ service cloud.firestore {
              request.auth.token.email_verified == true;
     }
 
+    // Health probe rule
+    match /test/{docId} {
+      allow read: if true;
+    }
+
     // --- User Profile Rules ---
     match /users/{userId} {
       allow get: if isSignedIn() && (isOwner(userId) || isAdmin());
