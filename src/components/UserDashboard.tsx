@@ -10,6 +10,12 @@ import {
   formatCoordinates,
 } from "../utils/geoUtils";
 import {
+  getRealLocation,
+  watchRealLocation,
+  reverseGeocodeLocation,
+  RealLocationResult,
+} from "../utils/locationService";
+import {
   Shield,
   Phone,
   MapPin,
@@ -31,6 +37,11 @@ import {
   ArrowDownLeft,
   ArrowUpLeft,
   Users,
+  RefreshCw,
+  Crosshair,
+  Sliders,
+  LocateFixed,
+  AlertTriangle,
 } from "lucide-react";
 import TrackingMap from "./TrackingMap";
 import { soundEngine } from "../utils/alertSound";
@@ -76,89 +87,165 @@ const getDeviceName = () => {
 
 export default function UserDashboard({ user, onLogout, onOpenProfileModal }: UserDashboardProps) {
   const [status, setStatus] = useState<UserStatus>(user.status || "normal");
-  const [simLocation, setSimLocation] = useState({
+  const [location, setLocation] = useState<{
+    lat: number;
+    lng: number;
+    accuracy: number;
+    heading: number;
+    speed: number;
+    source: "gps-high" | "gps-low" | "ip" | "cached" | "manual";
+    address?: string;
+  }>({
     lat: user.lastLocation?.lat || 27.7172,
     lng: user.lastLocation?.lng || 85.324,
+    accuracy: user.lastLocation?.accuracy || 25,
+    heading: user.lastLocation?.heading || 0,
+    speed: user.lastLocation?.speed || 0,
+    source: "cached",
+    address: undefined,
   });
-  const [currentHeading, setCurrentHeading] = useState<number>(user.lastLocation?.heading || 0);
-  const [currentSpeed, setCurrentSpeed] = useState<number>(user.lastLocation?.speed || 0);
+
   const [details, setDetails] = useState("");
   const [emergencies, setEmergencies] = useState<EmergencyAlert[]>([]);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
+  const [gpsLockActive, setGpsLockActive] = useState(true);
+  const [message, setMessage] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
+  const [showSimControls, setShowSimControls] = useState(false);
   const [isAutoWalking, setIsAutoWalking] = useState(false);
   const autoWalkIntervalRef = useRef<any>(null);
 
-  // Synchronize dynamic position with browser geolocation watchPosition
+  // Initial Real GPS Acquisition & continuous watcher setup
   useEffect(() => {
-    let watchId: number | null = null;
-    if (navigator.geolocation) {
-      // First quick fix
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-          const heading = pos.coords.heading !== null && !isNaN(pos.coords.heading) ? Math.round(pos.coords.heading) : 0;
-          const speed = pos.coords.speed !== null && !isNaN(pos.coords.speed) ? Math.round(pos.coords.speed * 3.6) : 0;
-          setSimLocation({ lat, lng });
-          setCurrentHeading(heading);
-          setCurrentSpeed(speed);
-          updateLocationInDb(lat, lng, heading, speed, pos.coords.accuracy || 25);
+    let unwatch: (() => void) | null = null;
+
+    const initializeRealLocation = async () => {
+      setIsLocating(true);
+      try {
+        const initialLoc = await getRealLocation();
+        setLocation({
+          lat: initialLoc.lat,
+          lng: initialLoc.lng,
+          accuracy: initialLoc.accuracy,
+          heading: initialLoc.heading,
+          speed: initialLoc.speed,
+          source: initialLoc.source,
+          address: initialLoc.address,
+        });
+
+        updateLocationInDb(
+          initialLoc.lat,
+          initialLoc.lng,
+          initialLoc.heading,
+          initialLoc.speed,
+          initialLoc.accuracy
+        );
+
+        if (initialLoc.source === "gps-high") {
+          setMessage({
+            type: "success",
+            text: `🛰️ Hardware GPS locked with high accuracy (±${initialLoc.accuracy}m). Real location tracking active.`,
+          });
+          setTimeout(() => setMessage(null), 5000);
+        } else if (initialLoc.source === "gps-low") {
+          setMessage({
+            type: "info",
+            text: `📡 Device location acquired (±${initialLoc.accuracy}m). Live tracking active.`,
+          });
+          setTimeout(() => setMessage(null), 5000);
+        } else if (initialLoc.source === "ip") {
+          setMessage({
+            type: "info",
+            text: `🌐 Network location estimated: ${initialLoc.address || "Nepal"}. Enable device GPS for centimeter accuracy.`,
+          });
+          setTimeout(() => setMessage(null), 6000);
+        }
+      } catch (err) {
+        console.warn("Initial location fetch notice:", err);
+      } finally {
+        setIsLocating(false);
+      }
+
+      // Start continuous real-time watch
+      unwatch = watchRealLocation(
+        (realUpdate: RealLocationResult) => {
+          if (!gpsLockActive) return; // if user manually dragged pin or test-walking, don't overwrite
+
+          setLocation((prev) => ({
+            lat: realUpdate.lat,
+            lng: realUpdate.lng,
+            accuracy: realUpdate.accuracy,
+            heading: realUpdate.heading || calculateBearing(prev.lat, prev.lng, realUpdate.lat, realUpdate.lng),
+            speed: realUpdate.speed || estimateSpeedKmH(prev.lat, prev.lng, Date.now() - 3000, realUpdate.lat, realUpdate.lng, Date.now()),
+            source: realUpdate.source,
+            address: realUpdate.address || prev.address,
+          }));
+
+          updateLocationInDb(
+            realUpdate.lat,
+            realUpdate.lng,
+            realUpdate.heading,
+            realUpdate.speed,
+            realUpdate.accuracy
+          );
         },
         (err) => {
-          console.log("Initial geolocation notice:", err);
-        },
-        { enableHighAccuracy: true }
+          console.warn("Live watch error notice:", err);
+        }
       );
+    };
 
-      // Continuous live watcher for real device movements & direction turns
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-          let heading = pos.coords.heading !== null && !isNaN(pos.coords.heading) ? Math.round(pos.coords.heading) : undefined;
-          let speed = pos.coords.speed !== null && !isNaN(pos.coords.speed) ? Math.round(pos.coords.speed * 3.6) : undefined;
-
-          // If device sensor did not provide heading, compute bearing from previous coordinate
-          if (heading === undefined) {
-            heading = calculateBearing(simLocation.lat, simLocation.lng, lat, lng);
-          }
-          if (speed === undefined) {
-            speed = estimateSpeedKmH(
-              simLocation.lat,
-              simLocation.lng,
-              Date.now() - 3000,
-              lat,
-              lng,
-              Date.now()
-            );
-          }
-
-          setSimLocation({ lat, lng });
-          setCurrentHeading(heading);
-          setCurrentSpeed(speed);
-          updateLocationInDb(lat, lng, heading, speed, pos.coords.accuracy || 20);
-        },
-        (err) => {
-          console.log("Continuous GPS stream notice:", err);
-        },
-        { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
-      );
-    }
+    initializeRealLocation();
 
     return () => {
-      if (watchId !== null && navigator.geolocation) {
-        navigator.geolocation.clearWatch(watchId);
-      }
+      if (unwatch) unwatch();
+      if (autoWalkIntervalRef.current) clearInterval(autoWalkIntervalRef.current);
     };
-  }, []);
+  }, [gpsLockActive]);
 
-  // Report status on mount
-  useEffect(() => {
-    const lat = user.lastLocation?.lat || simLocation.lat;
-    const lng = user.lastLocation?.lng || simLocation.lng;
-    updateLocationInDb(lat, lng, currentHeading, currentSpeed);
-  }, []);
+  // Manually force re-acquisition of Real GPS
+  const handleForceAcquireLocation = async () => {
+    setIsLocating(true);
+    setGpsLockActive(true);
+    if (isAutoWalking) {
+      if (autoWalkIntervalRef.current) clearInterval(autoWalkIntervalRef.current);
+      setIsAutoWalking(false);
+    }
+
+    try {
+      const freshLoc = await getRealLocation();
+      setLocation({
+        lat: freshLoc.lat,
+        lng: freshLoc.lng,
+        accuracy: freshLoc.accuracy,
+        heading: freshLoc.heading,
+        speed: freshLoc.speed,
+        source: freshLoc.source,
+        address: freshLoc.address,
+      });
+
+      await updateLocationInDb(
+        freshLoc.lat,
+        freshLoc.lng,
+        freshLoc.heading,
+        freshLoc.speed,
+        freshLoc.accuracy
+      );
+
+      setMessage({
+        type: "success",
+        text: `📍 Real location refreshed: ${freshLoc.address || `${freshLoc.lat.toFixed(4)}, ${freshLoc.lng.toFixed(4)}`} (${freshLoc.source.toUpperCase()})`,
+      });
+      setTimeout(() => setMessage(null), 4000);
+    } catch (error: any) {
+      setMessage({
+        type: "error",
+        text: "Could not access hardware GPS. Please ensure Location is allowed in browser settings.",
+      });
+    } finally {
+      setIsLocating(false);
+    }
+  };
 
   // Fetch emergencies triggered by this user
   useEffect(() => {
@@ -168,8 +255,8 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
       q,
       (snapshot) => {
         const list: EmergencyAlert[] = [];
-        snapshot.forEach((doc) => {
-          list.push(doc.data() as EmergencyAlert);
+        snapshot.forEach((docSnap) => {
+          list.push(docSnap.data() as EmergencyAlert);
         });
         list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         setEmergencies(list);
@@ -193,20 +280,18 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
   const updateLocationInDb = async (
     lat: number,
     lng: number,
-    heading?: number,
-    speed?: number,
-    accuracy: number = 30
+    heading: number = location.heading,
+    speed: number = location.speed,
+    accuracy: number = location.accuracy
   ) => {
     const dId = getDeviceId();
     const dName = getDeviceName();
-    const effectiveHeading = heading !== undefined ? heading : currentHeading;
-    const effectiveSpeed = speed !== undefined ? speed : currentSpeed;
 
     const locData = {
       lat,
       lng,
-      heading: effectiveHeading,
-      speed: effectiveSpeed,
+      heading,
+      speed,
       accuracy,
       timestamp: new Date().toISOString(),
     };
@@ -232,7 +317,6 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
 
     localStorage.setItem(`khoji_user_${user.uid}`, JSON.stringify(updatedUser));
 
-    // Update global local cache
     const currentGlobalUsers = localStorage.getItem("khoji_all_users");
     const globalUsersList: UserProfile[] = currentGlobalUsers ? JSON.parse(currentGlobalUsers) : [];
     const existingIndex = globalUsersList.findIndex((u) => u.uid === user.uid);
@@ -262,35 +346,42 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
     }
   };
 
-  // Move step in a given direction (North, South, East, West, etc.)
+  // Move step in a given direction (Simulation utility)
   const moveInDirection = (bearing: number, stepMeters: number = 40) => {
+    setGpsLockActive(false); // user manually nudged location
     const toRad = (deg: number) => (deg * Math.PI) / 180;
     const rad = toRad(bearing);
 
-    // Approximate meter deltas for latitude and longitude in Nepal
     const deltaLat = (Math.cos(rad) * stepMeters) / 111000;
-    const deltaLng = (Math.sin(rad) * stepMeters) / (111000 * Math.cos(toRad(simLocation.lat)));
+    const deltaLng = (Math.sin(rad) * stepMeters) / (111000 * Math.cos(toRad(location.lat)));
 
-    const nextLat = simLocation.lat + deltaLat;
-    const nextLng = simLocation.lng + deltaLng;
-    const simulatedSpeed = 15; // 15 km/h in motion
+    const nextLat = location.lat + deltaLat;
+    const nextLng = location.lng + deltaLng;
+    const simulatedSpeed = 15;
 
-    setSimLocation({ lat: nextLat, lng: nextLng });
-    setCurrentHeading(bearing);
-    setCurrentSpeed(simulatedSpeed);
+    setLocation((prev) => ({
+      ...prev,
+      lat: nextLat,
+      lng: nextLng,
+      heading: bearing,
+      speed: simulatedSpeed,
+      source: "manual",
+    }));
+
     updateLocationInDb(nextLat, nextLng, bearing, simulatedSpeed, 15);
   };
 
-  // Toggle Continuous Auto-Walking Simulation with direction turns
+  // Toggle Continuous Auto-Walking Simulation
   const toggleAutoWalk = () => {
     if (isAutoWalking) {
       if (autoWalkIntervalRef.current) clearInterval(autoWalkIntervalRef.current);
       setIsAutoWalking(false);
-      setCurrentSpeed(0);
-      updateLocationInDb(simLocation.lat, simLocation.lng, currentHeading, 0);
+      setLocation((prev) => ({ ...prev, speed: 0 }));
+      updateLocationInDb(location.lat, location.lng, location.heading, 0);
       return;
     }
 
+    setGpsLockActive(false);
     setIsAutoWalking(true);
     let stepIndex = 0;
     const bearings = [0, 45, 90, 135, 180, 225, 270, 315];
@@ -299,29 +390,28 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
       stepIndex++;
       const bearing = bearings[stepIndex % bearings.length];
       const rad = (bearing * Math.PI) / 180;
-      const stepMeters = 30; // 30m every 2 seconds = ~54 km/h
+      const stepMeters = 30;
 
-      setSimLocation((prev) => {
+      setLocation((prev) => {
         const deltaLat = (Math.cos(rad) * stepMeters) / 111000;
         const deltaLng = (Math.sin(rad) * stepMeters) / (111000 * Math.cos((prev.lat * Math.PI) / 180));
         const nextLat = prev.lat + deltaLat;
         const nextLng = prev.lng + deltaLng;
         const speed = 18;
 
-        setCurrentHeading(bearing);
-        setCurrentSpeed(speed);
         updateLocationInDb(nextLat, nextLng, bearing, speed, 12);
 
-        return { lat: nextLat, lng: nextLng };
+        return {
+          ...prev,
+          lat: nextLat,
+          lng: nextLng,
+          heading: bearing,
+          speed,
+          source: "manual",
+        };
       });
     }, 2000);
   };
-
-  useEffect(() => {
-    return () => {
-      if (autoWalkIntervalRef.current) clearInterval(autoWalkIntervalRef.current);
-    };
-  }, []);
 
   // Change user overall status (normal, lost, emergency)
   const changeStatus = async (newStatus: UserStatus) => {
@@ -335,11 +425,11 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
       deviceId: dId,
       deviceName: dName,
       lastLocation: {
-        lat: simLocation.lat,
-        lng: simLocation.lng,
-        heading: currentHeading,
-        speed: currentSpeed,
-        accuracy: 30,
+        lat: location.lat,
+        lng: location.lng,
+        heading: location.heading,
+        speed: location.speed,
+        accuracy: location.accuracy,
         timestamp: new Date().toISOString(),
       },
       status: newStatus,
@@ -398,6 +488,7 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
     setLoading(true);
     const dId = getDeviceId();
     const alertId = `emergency-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
     const newAlert: EmergencyAlert = {
       id: alertId,
       userId: user.uid,
@@ -406,10 +497,10 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
       type,
       status: "active" as const,
       location: {
-        lat: simLocation.lat,
-        lng: simLocation.lng,
+        lat: location.lat,
+        lng: location.lng,
       },
-      details: details.trim() || `Urgent ${type} rescue requested in Nepal.`,
+      details: details.trim() || `Urgent ${type} rescue requested in Nepal. Location: ${location.address || `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`}`,
       deviceId: dId,
       createdAt: new Date().toISOString(),
     };
@@ -436,11 +527,11 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
       await updateDoc(userDocRef, {
         status: targetStatus,
         lastLocation: {
-          lat: simLocation.lat,
-          lng: simLocation.lng,
-          heading: currentHeading,
-          speed: currentSpeed,
-          accuracy: 25,
+          lat: location.lat,
+          lng: location.lng,
+          heading: location.heading,
+          speed: location.speed,
+          accuracy: location.accuracy,
           timestamp: new Date().toISOString(),
         },
         updatedAt: new Date().toISOString(),
@@ -449,7 +540,7 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
       setDetails("");
       setMessage({
         type: "success",
-        text: `🚨 Active ${type.toUpperCase()} SOS broadcasted! Dispatchers are tracking your coordinates and heading live.`,
+        text: `🚨 Active ${type.toUpperCase()} SOS broadcasted! Dispatchers are tracking your coordinates live.`,
       });
     } catch (error) {
       console.warn("SOS dispatch notice:", error);
@@ -464,57 +555,72 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
   };
 
   // Map click or pin drag handler
-  const handleMapLocationChange = (lat: number, lng: number) => {
-    const bearing = calculateBearing(simLocation.lat, simLocation.lng, lat, lng);
-    setSimLocation({ lat, lng });
-    setCurrentHeading(bearing);
-    updateLocationInDb(lat, lng, bearing, 10);
+  const handleMapLocationChange = async (lat: number, lng: number) => {
+    setGpsLockActive(false); // User intentionally chose custom pin
+    const bearing = calculateBearing(location.lat, location.lng, lat, lng);
+    const revAddress = await reverseGeocodeLocation(lat, lng);
+
+    setLocation({
+      lat,
+      lng,
+      accuracy: 15,
+      heading: bearing,
+      speed: 10,
+      source: "manual",
+      address: revAddress,
+    });
+
+    updateLocationInDb(lat, lng, bearing, 10, 15);
   };
 
-  const compassData = getCompassDirection(currentHeading);
+  const compassData = getCompassDirection(location.heading);
 
   return (
     <div className="w-full min-h-screen bg-slate-50 flex flex-col font-sans" id="user-dashboard-wrapper">
       {/* Alert bar when in emergency */}
       {status === "emergency" && (
-        <div className="bg-red-600 text-white font-semibold text-center text-sm py-2 animate-pulse flex items-center justify-center gap-1.5 z-50 shadow-sm">
+        <div className="bg-red-600 text-white font-semibold text-center text-sm py-2.5 animate-pulse flex items-center justify-center gap-2 z-50 shadow-md">
           <Radio className="w-4 h-4 animate-ping" />
-          <span>ACTIVE EMERGENCY RADAR LIVE: Dispatch Center tracking your real-time coordinates and direction.</span>
+          <span>ACTIVE EMERGENCY BROADCAST: Dispatch Center is tracking your real coordinates and heading in real time.</span>
         </div>
       )}
 
       {/* Header */}
-      <header className="sticky top-0 z-40 bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between shadow-sm">
-        <div className="flex items-center gap-2">
+      <header className="sticky top-0 z-40 bg-white border-b border-slate-100 px-4 sm:px-6 py-3.5 flex items-center justify-between shadow-sm">
+        <div className="flex items-center gap-2.5">
           <div className="w-10 h-10 bg-red-600 rounded-xl flex items-center justify-center text-white shadow-md">
             <Shield className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              Khoji<span className="text-red-600">.com</span>
+            <h1 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-1.5">
+              <span>Khoji</span>
+              <span className="text-red-600">.com</span>
+              <span className="text-[10px] bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                Live Radar
+              </span>
             </h1>
-            <p className="text-[10px] text-slate-400 font-mono">NEPAL EMERGENCY PLATFORM • ACTIVE</p>
+            <p className="text-[10px] text-slate-400 font-mono">NEPAL CITIZEN RESCUE GRID • ACTIVE</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           {onOpenProfileModal && (
             <button
               onClick={onOpenProfileModal}
-              className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-200/80 transition rounded-xl shadow-sm cursor-pointer"
+              className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-200 transition rounded-xl shadow-sm cursor-pointer"
               title="Switch profile, add family account, or manage saved profiles"
             >
               <Users className="w-3.5 h-3.5 text-blue-600" />
-              <span className="hidden sm:inline">Switch / Add Profile</span>
+              <span className="hidden sm:inline">Switch Profile</span>
               <span className="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full font-mono">
-                Active: {user.fullName.split(" ")[0]}
+                {user.fullName.split(" ")[0]}
               </span>
             </button>
           )}
 
           <div className="text-right hidden md:block">
-            <span className="text-sm font-semibold text-slate-800">{user.fullName}</span>
-            <p className="text-[11px] text-slate-500">{user.email}</p>
+            <span className="text-sm font-semibold text-slate-800 block leading-tight">{user.fullName}</span>
+            <p className="text-[11px] text-slate-500 font-mono">{user.phone}</p>
           </div>
 
           <button
@@ -538,7 +644,7 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
               <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Device Tracking Status</span>
               <div className="flex items-center gap-2">
                 <span
-                  className={`w-3 h-3 rounded-full ${
+                  className={`w-3.5 h-3.5 rounded-full ${
                     status === "emergency"
                       ? "bg-red-500 animate-ping"
                       : status === "lost"
@@ -546,12 +652,12 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
                       : "bg-emerald-500"
                   }`}
                 />
-                <span className="font-extrabold text-lg text-slate-800 uppercase tracking-tight">
+                <span className="font-black text-lg text-slate-800 uppercase tracking-tight">
                   Status: {status}
                 </span>
               </div>
-              <p className="text-xs text-slate-500">
-                {status === "emergency" && "Dispatch Agencies tracking your live coordinates and heading."}
+              <p className="text-xs text-slate-500 leading-normal">
+                {status === "emergency" && "Dispatch agencies are tracking your live coordinates and heading."}
                 {status === "lost" && "Broadcasting active lost device position to Admin locator panel."}
                 {status === "normal" && "Device protected. System monitoring coordinates safely."}
               </p>
@@ -563,7 +669,7 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
                 <button
                   onClick={() => changeStatus("normal")}
                   disabled={loading}
-                  className="px-3 py-1.5 bg-emerald-100 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-lg hover:bg-emerald-200 transition disabled:opacity-50 flex items-center gap-1"
+                  className="px-3 py-1.5 bg-emerald-100 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-lg hover:bg-emerald-200 transition disabled:opacity-50 flex items-center gap-1 cursor-pointer"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>Mark Safe</span>
@@ -573,7 +679,7 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
                 <button
                   onClick={() => changeStatus("lost")}
                   disabled={loading}
-                  className="px-3 py-1.5 bg-amber-100 border border-amber-200 text-amber-800 text-xs font-bold rounded-lg hover:bg-amber-200 transition disabled:opacity-50"
+                  className="px-3 py-1.5 bg-amber-100 border border-amber-200 text-amber-800 text-xs font-bold rounded-lg hover:bg-amber-200 transition disabled:opacity-50 cursor-pointer"
                 >
                   ⚠️ Lost Device
                 </button>
@@ -586,8 +692,10 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
             <div
               className={`p-4 rounded-xl text-xs font-bold border ${
                 message.type === "success"
-                  ? "bg-indigo-50 text-indigo-800 border-indigo-100"
-                  : "bg-red-50 text-red-800 border-red-100"
+                  ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                  : message.type === "info"
+                  ? "bg-blue-50 text-blue-800 border-blue-200"
+                  : "bg-red-50 text-red-800 border-red-200"
               }`}
             >
               {message.text}
@@ -602,7 +710,7 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
             </h2>
 
             <p className="text-xs text-slate-500 leading-relaxed">
-              Facing immediate danger? Push any red rescue button. The agency receives your live GPS coordinates & heading.
+              Facing immediate danger? Push any red rescue button. The agency receives your real GPS coordinates & heading.
             </p>
 
             <div className="space-y-1">
@@ -619,7 +727,7 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
               <button
                 onClick={() => triggerSOS("police")}
                 disabled={loading}
-                className="bg-red-600 hover:bg-red-700 text-white p-3 rounded-xl flex items-center gap-3 transition shadow-md font-bold text-center justify-center text-xs"
+                className="bg-red-600 hover:bg-red-700 text-white p-3 rounded-xl flex items-center gap-2.5 transition shadow-md font-bold text-center justify-center text-xs cursor-pointer"
               >
                 🚨 Police Dispatch (100)
               </button>
@@ -627,7 +735,7 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
               <button
                 onClick={() => triggerSOS("ambulance")}
                 disabled={loading}
-                className="bg-red-500 hover:bg-red-600 text-white p-3 rounded-xl flex items-center gap-3 transition shadow-md font-bold text-center justify-center text-xs"
+                className="bg-rose-600 hover:bg-rose-700 text-white p-3 rounded-xl flex items-center gap-2.5 transition shadow-md font-bold text-center justify-center text-xs cursor-pointer"
               >
                 🚑 Urgent Ambulance (102)
               </button>
@@ -635,7 +743,7 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
               <button
                 onClick={() => triggerSOS("fire")}
                 disabled={loading}
-                className="bg-orange-600 hover:bg-orange-700 text-white p-3 rounded-xl flex items-center gap-3 transition shadow-md font-bold text-center justify-center text-xs"
+                className="bg-orange-600 hover:bg-orange-700 text-white p-3 rounded-xl flex items-center gap-2.5 transition shadow-md font-bold text-center justify-center text-xs cursor-pointer"
               >
                 🔥 Fire Brigade (101)
               </button>
@@ -643,7 +751,7 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
               <button
                 onClick={() => triggerSOS("lost")}
                 disabled={loading}
-                className="bg-slate-800 hover:bg-slate-900 text-white p-3 rounded-xl flex items-center gap-3 transition shadow-md font-bold text-center justify-center text-xs"
+                className="bg-slate-800 hover:bg-slate-900 text-white p-3 rounded-xl flex items-center gap-2.5 transition shadow-md font-bold text-center justify-center text-xs cursor-pointer"
               >
                 ⚠️ Device Stolen Map Alert
               </button>
@@ -669,7 +777,7 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
                   </div>
                   <a
                     href={`tel:${contact.number}`}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 font-extrabold text-xs rounded-lg transition"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 font-extrabold text-xs rounded-lg transition cursor-pointer"
                   >
                     <Phone className="w-3 h-3" />
                     <span>{contact.number}</span>
@@ -680,23 +788,58 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
           </div>
         </div>
 
-        {/* Right Side: Map location & Directional Movement Controls */}
+        {/* Right Side: Map location & Real-Time GPS Tracking Controls */}
         <div className="lg:col-span-7 flex flex-col gap-6">
-          <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex-1 flex flex-col gap-4 min-h-[440px]">
+          <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex-1 flex flex-col gap-4 min-h-[460px]">
+            {/* Real Location Header & Re-Acquire button */}
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
                 <h2 className="text-base font-extrabold text-slate-900 flex items-center gap-1.5">
-                  <MapPin className="text-indigo-600 w-5 h-5 animate-bounce" />
-                  <span>Live Coordinates & Direction Tracker</span>
+                  <MapPin className="text-blue-600 w-5 h-5 animate-bounce" />
+                  <span>Real Device Location Tracker</span>
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Drag the pin or use the directional controls below to test live heading updates on the Admin map.
+                  {location.address ? (
+                    <span className="font-semibold text-slate-700">📍 {location.address}</span>
+                  ) : (
+                    "Acquiring real-time physical GPS coordinates..."
+                  )}
                 </p>
               </div>
-              <div className="text-right">
-                <span className="text-[10px] text-indigo-600 font-bold bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-full uppercase font-mono">
-                  Live GPS Signal Active
+
+              <div className="flex items-center gap-2">
+                {/* Source Badge */}
+                <span
+                  className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase font-mono border flex items-center gap-1 ${
+                    location.source === "gps-high"
+                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                      : location.source === "gps-low"
+                      ? "bg-blue-50 text-blue-700 border-blue-200"
+                      : location.source === "ip"
+                      ? "bg-amber-50 text-amber-700 border-amber-200"
+                      : "bg-slate-100 text-slate-700 border-slate-200"
+                  }`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-current animate-ping"></span>
+                  {location.source === "gps-high"
+                    ? "🛰️ GPS Hardware Lock"
+                    : location.source === "gps-low"
+                    ? "📡 Network GPS"
+                    : location.source === "ip"
+                    ? "🌐 IP Geolocation"
+                    : "📍 Pinned"}
                 </span>
+
+                {/* Force Acquire Real Location */}
+                <button
+                  onClick={handleForceAcquireLocation}
+                  disabled={isLocating}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm transition disabled:opacity-50 cursor-pointer"
+                  title="Force re-acquire exact real physical device location from GPS sensor"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLocating ? "animate-spin" : ""}`} />
+                  <span>{isLocating ? "Acquiring..." : "Locate Me"}</span>
+                </button>
               </div>
             </div>
 
@@ -705,14 +848,14 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
               <div className="flex items-center gap-2">
                 <div
                   className="w-9 h-9 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center flex-shrink-0 transition-transform duration-500"
-                  style={{ transform: `rotate(${currentHeading}deg)` }}
+                  style={{ transform: `rotate(${location.heading}deg)` }}
                 >
                   <Compass className="w-5 h-5 text-indigo-400" />
                 </div>
                 <div>
-                  <span className="text-[10px] text-slate-400 font-mono block uppercase">Direction</span>
+                  <span className="text-[10px] text-slate-400 font-mono block uppercase">Bearing</span>
                   <span className="font-mono text-xs font-bold text-slate-100">
-                    {currentHeading}° {compassData.code} {compassData.arrow}
+                    {location.heading}° {compassData.code} {compassData.arrow}
                   </span>
                 </div>
               </div>
@@ -720,120 +863,165 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
               <div>
                 <span className="text-[10px] text-slate-400 font-mono block uppercase">Ground Speed</span>
                 <span className="font-mono text-xs font-bold text-emerald-400">
-                  {currentSpeed > 0 ? `${currentSpeed} km/h` : "Stationary"}
+                  {location.speed > 0 ? `${location.speed} km/h` : "Stationary"}
                 </span>
               </div>
 
               <div>
                 <span className="text-[10px] text-slate-400 font-mono block uppercase">Latitude</span>
-                <span className="font-mono text-xs font-bold text-slate-200">{simLocation.lat.toFixed(5)}</span>
+                <span className="font-mono text-xs font-bold text-slate-200">{location.lat.toFixed(5)}</span>
               </div>
 
               <div>
                 <span className="text-[10px] text-slate-400 font-mono block uppercase">Longitude</span>
-                <span className="font-mono text-xs font-bold text-slate-200">{simLocation.lng.toFixed(5)}</span>
+                <span className="font-mono text-xs font-bold text-slate-200">{location.lng.toFixed(5)}</span>
               </div>
             </div>
 
-            {/* Directional Movement Simulator Pad */}
-            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+            {/* Live GPS Lock Bar & Testing Toolkit toggle */}
+            <div className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs">
               <div className="flex items-center gap-2">
-                <Navigation className="w-4 h-4 text-indigo-600" />
-                <div>
-                  <div className="text-xs font-extrabold text-slate-800">Directional Steering Pad</div>
-                  <div className="text-[10px] text-slate-500">Tap to step in any cardinal direction</div>
+                <LocateFixed className="w-4 h-4 text-blue-600" />
+                <span className="font-bold text-slate-700">Live GPS Auto-Tracking:</span>
+                <span
+                  className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
+                    gpsLockActive ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
+                  }`}
+                >
+                  {gpsLockActive ? "LOCKED TO SENSOR" : "MANUAL MODE"}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {!gpsLockActive && (
+                  <button
+                    onClick={() => {
+                      setGpsLockActive(true);
+                      handleForceAcquireLocation();
+                    }}
+                    className="text-[11px] font-bold text-blue-600 hover:text-blue-800 underline cursor-pointer"
+                  >
+                    Resume GPS Sensor Lock
+                  </button>
+                )}
+
+                <button
+                  onClick={() => setShowSimControls(!showSimControls)}
+                  className="flex items-center gap-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 px-2 py-1 rounded-lg shadow-xs cursor-pointer"
+                >
+                  <Sliders className="w-3 h-3" />
+                  <span>{showSimControls ? "Hide Testing Controls" : "Testing Controls"}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Optional Testing Simulator Pad (Collapsible) */}
+            {showSimControls && (
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 animate-fadeIn">
+                <div className="flex items-center gap-2">
+                  <Navigation className="w-4 h-4 text-indigo-600" />
+                  <div>
+                    <div className="text-xs font-extrabold text-slate-800">Heading & Movement Test Pad</div>
+                    <div className="text-[10px] text-slate-500">Tap arrows to simulate physical walking steps</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {/* 8-Direction Step Controls */}
+                  <div className="grid grid-cols-3 gap-1 bg-white p-1.5 rounded-xl border border-slate-200 shadow-sm">
+                    <button
+                      onClick={() => moveInDirection(315)}
+                      className="p-1.5 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-lg transition text-xs flex items-center justify-center font-bold cursor-pointer"
+                      title="North-West (315°)"
+                    >
+                      <ArrowUpLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => moveInDirection(0)}
+                      className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition text-xs flex items-center justify-center font-bold cursor-pointer"
+                      title="North (0°)"
+                    >
+                      <ArrowUp className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => moveInDirection(45)}
+                      className="p-1.5 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-lg transition text-xs flex items-center justify-center font-bold cursor-pointer"
+                      title="North-East (45°)"
+                    >
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      onClick={() => moveInDirection(270)}
+                      className="p-1.5 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-lg transition text-xs flex items-center justify-center font-bold cursor-pointer"
+                      title="West (270°)"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={toggleAutoWalk}
+                      className={`p-1.5 rounded-lg text-xs font-extrabold flex items-center justify-center transition cursor-pointer ${
+                        isAutoWalking ? "bg-amber-600 text-white animate-pulse" : "bg-slate-900 text-white hover:bg-slate-800"
+                      }`}
+                      title={isAutoWalking ? "Stop Walking" : "Auto-Walk Mode"}
+                    >
+                      {isAutoWalking ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    </button>
+                    <button
+                      onClick={() => moveInDirection(90)}
+                      className="p-1.5 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-lg transition text-xs flex items-center justify-center font-bold cursor-pointer"
+                      title="East (90°)"
+                    >
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      onClick={() => moveInDirection(225)}
+                      className="p-1.5 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-lg transition text-xs flex items-center justify-center font-bold cursor-pointer"
+                      title="South-West (225°)"
+                    >
+                      <ArrowDownLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => moveInDirection(180)}
+                      className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition text-xs flex items-center justify-center font-bold cursor-pointer"
+                      title="South (180°)"
+                    >
+                      <ArrowDown className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => moveInDirection(135)}
+                      className="p-1.5 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-lg transition text-xs flex items-center justify-center font-bold cursor-pointer"
+                      title="South-East (135°)"
+                    >
+                      <ArrowDownRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={toggleAutoWalk}
+                    className={`px-3 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition shadow cursor-pointer ${
+                      isAutoWalking
+                        ? "bg-amber-600 text-white border border-amber-500 shadow-amber-500/20"
+                        : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20"
+                    }`}
+                  >
+                    {isAutoWalking ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    <span>{isAutoWalking ? "Stop Walking" : "Auto-Walk Mode"}</span>
+                  </button>
                 </div>
               </div>
-
-              {/* 8-Direction Step Controls */}
-              <div className="grid grid-cols-3 gap-1 bg-white p-1.5 rounded-xl border border-slate-200 shadow-sm">
-                <button
-                  onClick={() => moveInDirection(315)}
-                  className="p-2 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-lg transition text-xs flex items-center justify-center font-bold"
-                  title="North-West (315°)"
-                >
-                  <ArrowUpLeft className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => moveInDirection(0)}
-                  className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition text-xs flex items-center justify-center font-bold"
-                  title="North (0°)"
-                >
-                  <ArrowUp className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => moveInDirection(45)}
-                  className="p-2 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-lg transition text-xs flex items-center justify-center font-bold"
-                  title="North-East (45°)"
-                >
-                  <ArrowUpRight className="w-3.5 h-3.5" />
-                </button>
-
-                <button
-                  onClick={() => moveInDirection(270)}
-                  className="p-2 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-lg transition text-xs flex items-center justify-center font-bold"
-                  title="West (270°)"
-                >
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={toggleAutoWalk}
-                  className={`p-2 rounded-lg text-xs font-extrabold flex items-center justify-center transition ${
-                    isAutoWalking ? "bg-amber-600 text-white animate-pulse" : "bg-slate-900 text-white hover:bg-slate-800"
-                  }`}
-                  title={isAutoWalking ? "Stop Walking" : "Auto-Walk Mode"}
-                >
-                  {isAutoWalking ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                </button>
-                <button
-                  onClick={() => moveInDirection(90)}
-                  className="p-2 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-lg transition text-xs flex items-center justify-center font-bold"
-                  title="East (90°)"
-                >
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-
-                <button
-                  onClick={() => moveInDirection(225)}
-                  className="p-2 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-lg transition text-xs flex items-center justify-center font-bold"
-                  title="South-West (225°)"
-                >
-                  <ArrowDownLeft className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => moveInDirection(180)}
-                  className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition text-xs flex items-center justify-center font-bold"
-                  title="South (180°)"
-                >
-                  <ArrowDown className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => moveInDirection(135)}
-                  className="p-2 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-lg transition text-xs flex items-center justify-center font-bold"
-                  title="South-East (135°)"
-                >
-                  <ArrowDownRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              {/* Auto Walk button */}
-              <button
-                onClick={toggleAutoWalk}
-                className={`px-3 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition shadow ${
-                  isAutoWalking
-                    ? "bg-amber-600 text-white border border-amber-500 shadow-amber-500/20"
-                    : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20"
-                }`}
-              >
-                {isAutoWalking ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                <span>{isAutoWalking ? "Stop Walking" : "Auto-Walk Simulator"}</span>
-              </button>
-            </div>
+            )}
 
             {/* Interactive Leaflet Tracking Map */}
-            <div className="flex-1 min-h-[320px]">
+            <div className="flex-1 min-h-[340px]">
               <TrackingMap
-                simulateLocation={simLocation}
+                simulateLocation={location}
+                currentHeading={location.heading}
+                currentSpeed={location.speed}
+                accuracy={location.accuracy}
+                locationSource={location.source}
+                address={location.address}
                 interactive={true}
                 onMapClick={handleMapLocationChange}
               />
