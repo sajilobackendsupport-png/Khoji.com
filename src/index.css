@@ -6,11 +6,49 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
+html {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Leaflet performance optimizations & smooth scroll non-blocking touch actions */
+.leaflet-container {
+  font-family: inherit;
+  transform: translateZ(0);
+  will-change: transform;
+  touch-action: pan-y !important;
+}
+
+.leaflet-tile-container img {
+  will-change: transform;
+  transform: translateZ(0);
+}
+
+.leaflet-marker-icon,
+.leaflet-marker-shadow {
+  will-change: transform;
+}
+
 /* Custom leaflet map markers styles to override default ugly sizes */
 .custom-leaflet-marker {
   display: flex;
   align-items: center;
   justify-content: center;
+  will-change: transform;
+}
+
+.realtime-user-pin,
+.custom-user-tracker-marker {
+  will-change: transform;
+  contain: layout style;
 }
 
 /* Custom scrollbar */
@@ -28,3 +66,4 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(156, 163, 175, 0.5);
 }
+

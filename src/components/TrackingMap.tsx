@@ -20,6 +20,7 @@ import {
   Pause,
   Layers,
   Maximize2,
+  MousePointer,
 } from "lucide-react";
 
 interface TrackingMapProps {
@@ -73,6 +74,7 @@ export default function TrackingMap({
   const [activeSpeed, setActiveSpeed] = useState<number>(currentSpeed);
   const [isSimulatingWalk, setIsSimulatingWalk] = useState<boolean>(false);
   const [mapLayer, setMapLayer] = useState<"standard" | "satellite">("standard");
+  const [scrollZoomEnabled, setScrollZoomEnabled] = useState<boolean>(false);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const simWalkTimerRef = useRef<any>(null);
 
@@ -85,7 +87,17 @@ export default function TrackingMap({
     if (currentSpeed !== undefined) setActiveSpeed(currentSpeed);
   }, [currentSpeed]);
 
-  // 1. Initialize Leaflet Map
+  // Handle dynamic Scroll Wheel Zoom enable/disable
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (scrollZoomEnabled) {
+      mapRef.current.scrollWheelZoom.enable();
+    } else {
+      mapRef.current.scrollWheelZoom.disable();
+    }
+  }, [scrollZoomEnabled]);
+
+  // 1. Initialize Leaflet Map (scrollWheelZoom disabled by default for buttery smooth page scrolling)
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
@@ -95,12 +107,15 @@ export default function TrackingMap({
 
     const map = L.map(containerRef.current, {
       zoomControl: true,
-      scrollWheelZoom: true,
+      scrollWheelZoom: false, // Prevents map from intercepting page scroll
+      touchZoom: true,
+      zoomAnimation: true,
+      fadeAnimation: true,
     }).setView([initialLat, initialLng], 15);
 
     mapRef.current = map;
 
-    // Standard OpenStreetMap tiles
+    // Standard OpenStreetMap tiles with fast caching
     const tileUrl =
       mapLayer === "satellite"
         ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
@@ -235,75 +250,28 @@ export default function TrackingMap({
     }
   }, [selectedUser, selectedEmergency, simulateLocation, autoFollow]);
 
-  // 4. Render Current User Pin (from simulateLocation / Real GPS)
+    // 4. Render or Smoothly Update Current User Pin (from simulateLocation / Real GPS)
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    // Clean previous single user pin
-    if (currentPinRef.current) {
-      currentPinRef.current.remove();
-      currentPinRef.current = null;
+    if (!simulateLocation) {
+      if (currentPinRef.current) {
+        currentPinRef.current.remove();
+        currentPinRef.current = null;
+      }
+      if (currentPinAccuracyCircleRef.current) {
+        currentPinAccuracyCircleRef.current.remove();
+        currentPinAccuracyCircleRef.current = null;
+      }
+      return;
     }
-    if (currentPinAccuracyCircleRef.current) {
-      currentPinAccuracyCircleRef.current.remove();
-      currentPinAccuracyCircleRef.current = null;
-    }
-
-    if (!simulateLocation) return;
 
     const { lat, lng } = simulateLocation;
     const heading = activeBearing || currentHeading || 0;
     const compassInfo = getCompassDirection(heading);
-
-    // Dynamic color based on source
     const isHighGps = locationSource === "gps-high";
     const haloColor = isHighGps ? "#3b82f6" : "#6366f1";
-
-    const customUserIcon = L.divIcon({
-      className: "realtime-user-pin",
-      iconSize: [52, 52],
-      iconAnchor: [26, 26],
-      html: `
-        <div class="relative w-[52px] h-[52px] flex items-center justify-center cursor-pointer group">
-          <!-- Pulsing GPS Radar Wave -->
-          <span class="absolute inline-flex h-full w-full rounded-full bg-blue-500 opacity-40 animate-ping"></span>
-          <span class="absolute inline-flex h-8 w-8 rounded-full bg-blue-400 opacity-30 animate-pulse"></span>
-
-          <!-- Directional Arrow Heading Pointer -->
-          <div 
-            class="absolute inset-0 flex items-center justify-center transition-transform duration-300 pointer-events-none"
-            style="transform: rotate(${heading}deg);"
-          >
-            <div class="w-0 h-0 border-l-[7px] border-l-transparent border-r-[7px] border-r-transparent border-b-[16px] border-b-blue-600 -translate-y-5 filter drop-shadow-md"></div>
-          </div>
-
-          <!-- Main Pin Avatar Disc -->
-          <div class="relative z-10 flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 text-white border-2 border-white shadow-xl ring-2 ring-blue-400/50">
-            <span class="text-xs font-black">📍</span>
-          </div>
-
-          <!-- Mini Heading Badge -->
-          <div class="absolute -bottom-2 z-20 bg-slate-900 text-blue-300 text-[8px] font-mono font-bold px-1.5 py-0.5 rounded-full border border-blue-500/60 shadow whitespace-nowrap">
-            ${heading}° ${compassInfo.code}
-          </div>
-        </div>
-      `,
-    });
-
-    const marker = L.marker([lat, lng], {
-      icon: customUserIcon,
-      draggable: interactive,
-    }).addTo(map);
-
-    if (interactive) {
-      marker.on("dragend", (e: any) => {
-        const newPos = e.target.getLatLng();
-        if (onMapClick) {
-          onMapClick(newPos.lat, newPos.lng);
-        }
-      });
-    }
 
     const readableSource =
       locationSource === "gps-high"
@@ -314,33 +282,97 @@ export default function TrackingMap({
         ? "🌐 IP Geolocation Network"
         : "📍 Current Coordinates";
 
-    marker.bindPopup(`
-      <div class="p-1 min-w-[200px] leading-tight font-sans">
-        <div class="flex items-center gap-1.5 mb-1.5 bg-blue-600 text-white p-2 rounded-lg">
-          <span class="text-xs font-black">📍 Real Device Location</span>
-          <span class="text-[9px] ml-auto px-1.5 py-0.5 rounded bg-blue-900 text-white font-mono uppercase">LIVE</span>
-        </div>
-        <p class="text-[11px] text-slate-700 font-semibold mb-1">${address || "Nepal Coordinates Locked"}</p>
-        <p class="text-[10px] text-slate-500 mb-0.5"><b>Source:</b> ${readableSource}</p>
-        <p class="text-[10px] text-slate-500 mb-0.5"><b>Coordinates:</b> ${lat.toFixed(5)}, ${lng.toFixed(5)}</p>
-        <p class="text-[10px] text-slate-500 mb-0.5"><b>Heading:</b> ${heading}° (${compassInfo.label})</p>
-        <p class="text-[10px] text-slate-500 mb-1"><b>Accuracy:</b> ±${accuracy} meters</p>
-        ${interactive ? '<p class="text-[9px] text-indigo-600 font-bold border-t pt-1">💡 Drag pin or click map to reposition</p>' : ""}
-      </div>
-    `);
+    // If marker already exists, smoothly update position & rotation without thrashing DOM
+    if (currentPinRef.current) {
+      currentPinRef.current.setLatLng([lat, lng]);
+      const el = currentPinRef.current.getElement();
+      if (el) {
+        const arrowEl = el.querySelector(".user-heading-arrow") as HTMLElement;
+        if (arrowEl) arrowEl.style.transform = `rotate(${heading}deg)`;
+        const badgeEl = el.querySelector(".user-heading-badge") as HTMLElement;
+        if (badgeEl) badgeEl.textContent = `${heading}° ${compassInfo.code}`;
+      }
+    } else {
+      const customUserIcon = L.divIcon({
+        className: "realtime-user-pin",
+        iconSize: [52, 52],
+        iconAnchor: [26, 26],
+        html: `
+          <div class="relative w-[52px] h-[52px] flex items-center justify-center cursor-pointer group">
+            <!-- Radar Wave -->
+            <span class="absolute inline-flex h-full w-full rounded-full bg-blue-500 opacity-40 animate-ping"></span>
+            <span class="absolute inline-flex h-8 w-8 rounded-full bg-blue-400 opacity-30 animate-pulse"></span>
 
-    currentPinRef.current = marker;
+            <!-- Directional Pointer -->
+            <div 
+              class="user-heading-arrow absolute inset-0 flex items-center justify-center transition-transform duration-300 pointer-events-none"
+              style="transform: rotate(${heading}deg);"
+            >
+              <div class="w-0 h-0 border-l-[7px] border-l-transparent border-r-[7px] border-r-transparent border-b-[16px] border-b-blue-600 -translate-y-5 filter drop-shadow-md"></div>
+            </div>
 
-    // Accuracy circle halo
-    if (accuracy && accuracy > 0) {
-      const circle = L.circle([lat, lng], {
-        radius: Math.min(Math.max(accuracy, 10), 100),
-        color: haloColor,
-        fillColor: haloColor,
-        fillOpacity: 0.12,
-        weight: 1.5,
+            <!-- Avatar Disc -->
+            <div class="relative z-10 flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 text-white border-2 border-white shadow-xl ring-2 ring-blue-400/50">
+              <span class="text-xs font-black">📍</span>
+            </div>
+
+            <!-- Mini Heading Badge -->
+            <div class="user-heading-badge absolute -bottom-2 z-20 bg-slate-900 text-blue-300 text-[8px] font-mono font-bold px-1.5 py-0.5 rounded-full border border-blue-500/60 shadow whitespace-nowrap">
+              ${heading}° ${compassInfo.code}
+            </div>
+          </div>
+        `,
+      });
+
+      const marker = L.marker([lat, lng], {
+        icon: customUserIcon,
+        draggable: interactive,
       }).addTo(map);
-      currentPinAccuracyCircleRef.current = circle;
+
+      if (interactive) {
+        marker.on("dragend", (e: any) => {
+          const newPos = e.target.getLatLng();
+          if (onMapClick) {
+            onMapClick(newPos.lat, newPos.lng);
+          }
+        });
+      }
+
+      currentPinRef.current = marker;
+    }
+
+    if (currentPinRef.current) {
+      currentPinRef.current.bindPopup(`
+        <div class="p-1 min-w-[200px] leading-tight font-sans">
+          <div class="flex items-center gap-1.5 mb-1.5 bg-blue-600 text-white p-2 rounded-lg">
+            <span class="text-xs font-black">📍 Real Device Location</span>
+            <span class="text-[9px] ml-auto px-1.5 py-0.5 rounded bg-blue-900 text-white font-mono uppercase">LIVE</span>
+          </div>
+          <p class="text-[11px] text-slate-700 font-semibold mb-1">${address || "Nepal Coordinates Locked"}</p>
+          <p class="text-[10px] text-slate-500 mb-0.5"><b>Source:</b> ${readableSource}</p>
+          <p class="text-[10px] text-slate-500 mb-0.5"><b>Coordinates:</b> ${lat.toFixed(5)}, ${lng.toFixed(5)}</p>
+          <p class="text-[10px] text-slate-500 mb-0.5"><b>Heading:</b> ${heading}° (${compassInfo.label})</p>
+          <p class="text-[10px] text-slate-500 mb-1"><b>Accuracy:</b> ±${accuracy} meters</p>
+          ${interactive ? '<p class="text-[9px] text-indigo-600 font-bold border-t pt-1">💡 Drag pin or click map to reposition</p>' : ""}
+        </div>
+      `);
+    }
+
+    // Accuracy circle halo update or create
+    if (accuracy && accuracy > 0) {
+      if (currentPinAccuracyCircleRef.current) {
+        currentPinAccuracyCircleRef.current.setLatLng([lat, lng]);
+        currentPinAccuracyCircleRef.current.setRadius(Math.min(Math.max(accuracy, 10), 100));
+      } else {
+        const circle = L.circle([lat, lng], {
+          radius: Math.min(Math.max(accuracy, 10), 100),
+          color: haloColor,
+          fillColor: haloColor,
+          fillOpacity: 0.12,
+          weight: 1.5,
+        }).addTo(map);
+        currentPinAccuracyCircleRef.current = circle;
+      }
     }
   }, [simulateLocation, activeBearing, currentHeading, accuracy, locationSource, address, interactive]);
 
@@ -652,6 +684,20 @@ export default function TrackingMap({
           >
             <Layers className="w-3.5 h-3.5 text-blue-400" />
             <span>{mapLayer === "standard" ? "Satellite" : "Street"}</span>
+          </button>
+
+          {/* Scroll Zoom Toggle */}
+          <button
+            onClick={() => setScrollZoomEnabled(!scrollZoomEnabled)}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition shadow-md backdrop-blur-md border cursor-pointer ${
+              scrollZoomEnabled
+                ? "bg-amber-600 text-white border-amber-500 shadow-amber-500/20"
+                : "bg-slate-900/90 text-slate-300 border-slate-800 hover:text-white"
+            }`}
+            title="Toggle whether mouse scroll zooms the map or scrolls the page smoothly"
+          >
+            <MousePointer className="w-3.5 h-3.5" />
+            <span>Scroll Zoom: {scrollZoomEnabled ? "ON" : "OFF"}</span>
           </button>
 
           {/* Recenter Button */}
