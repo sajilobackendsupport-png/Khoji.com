@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { UserProfile, EmergencyAlert, DeviceInfo } from "../types";
+import { UserProfile, EmergencyAlert, DeviceInfo, SiteConfig } from "../types";
 import { collection, doc, updateDoc, onSnapshot, query, where, getDocs } from "firebase/firestore";
 import { db } from "../firebase";
 import {
@@ -22,13 +22,23 @@ import {
   AlertOctagon,
   X,
   ExternalLink,
+  Sparkles,
+  Palette,
+  LayoutDashboard,
+  Megaphone,
 } from "lucide-react";
 import TrackingMap from "./TrackingMap";
+import FirebaseWebCustomizer from "./FirebaseWebCustomizer";
 import {
   soundEngine,
   sendBrowserNotification,
   requestNotificationPermission,
 } from "../utils/alertSound";
+import {
+  subscribeSiteConfig,
+  getSiteConfigLocal,
+  DEFAULT_SITE_CONFIG,
+} from "../utils/siteConfig";
 
 interface AdminDashboardProps {
   adminUser: UserProfile;
@@ -46,6 +56,10 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
   const [loading, setLoading] = useState<{ [key: string]: boolean }>({});
   const [sysLog, setSysLog] = useState<{ id: string; msg: string; time: string }[]>([]);
 
+  // Navigation View Tab: Dispatch Map vs Firebase Customizer vs Citizen Management
+  const [adminViewMode, setAdminViewMode] = useState<"dispatch" | "customizer" | "citizens">("dispatch");
+  const [siteConfig, setSiteConfig] = useState<SiteConfig>(getSiteConfigLocal());
+
   // Sound & Notification state
   const [isMuted, setIsMuted] = useState<boolean>(soundEngine.getMuted());
   const [isSirenSounding, setIsSirenSounding] = useState<boolean>(false);
@@ -58,6 +72,14 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
   const prevActiveIdsRef = useRef<Set<string>>(new Set());
   const prevUserStatusesRef = useRef<Record<string, string>>({});
   const isInitialLoadRef = useRef<boolean>(true);
+
+  // Subscribe to real-time site configuration updates from Firebase Firestore
+  useEffect(() => {
+    const unsub = subscribeSiteConfig((cfg) => {
+      setSiteConfig(cfg);
+    });
+    return unsub;
+  }, []);
 
   // Derived state to flatten user profiles and their multiple devices into separate targets
   const trackedDevices = useMemo(() => {
@@ -663,6 +685,27 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
         </div>
       )}
 
+      {/* Emergency Broadcast Banner configured via Firebase Web Customizer */}
+      {siteConfig.bannerEnabled && siteConfig.bannerText && (
+        <div
+          className={`py-2.5 px-4 text-xs font-bold flex items-center justify-between gap-3 shadow-inner ${
+            siteConfig.bannerSeverity === "critical"
+              ? "bg-red-600 text-white animate-pulse"
+              : siteConfig.bannerSeverity === "warning"
+              ? "bg-amber-500 text-slate-950"
+              : "bg-blue-600 text-white"
+          }`}
+        >
+          <div className="flex items-center gap-2 max-w-7xl mx-auto flex-1 justify-center text-center">
+            <Megaphone className="w-4 h-4 flex-shrink-0" />
+            <span>{siteConfig.bannerText}</span>
+          </div>
+          <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-black/20 text-white">
+            Firebase Broadcast
+          </span>
+        </div>
+      )}
+
       {/* Nav */}
       <header className="sticky top-0 z-30 bg-slate-900 text-white px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3 shadow-md border-b border-slate-800">
         <div className="flex items-center gap-2.5">
@@ -671,13 +714,46 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
           </div>
           <div>
             <h1 className="text-lg sm:text-xl font-extrabold tracking-tight">
-              Khoji<span className="text-red-500">.com</span>{" "}
+              {siteConfig.brandLogoText || "Khoji.com"}{" "}
               <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded-full uppercase ml-1 font-bold tracking-widest text-[#f8fafc]">
-                Nepal Command
+                {siteConfig.badgeText || "Nepal Command"}
               </span>
             </h1>
-            <p className="text-[10px] text-slate-400 font-mono">EMERGENCY DISPATCH & LIVE SIREN SYSTEM</p>
+            <p className="text-[10px] text-slate-400 font-mono">
+              {siteConfig.siteTagline || "EMERGENCY DISPATCH & LIVE SIREN SYSTEM"}
+            </p>
           </div>
+        </div>
+
+        {/* Navigation Tabs (Dispatch Grid vs Firebase Web Customizer vs Citizens) */}
+        <div className="flex items-center bg-slate-800/90 p-1 rounded-2xl border border-slate-700/80">
+          <button
+            onClick={() => setAdminViewMode("dispatch")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+              adminViewMode === "dispatch"
+                ? "bg-red-600 text-white shadow-md"
+                : "text-slate-300 hover:text-white hover:bg-slate-700/60"
+            }`}
+          >
+            <LayoutDashboard className="w-3.5 h-3.5" />
+            <span>Live Radar & GPS</span>
+          </button>
+
+          <button
+            onClick={() => setAdminViewMode("customizer")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+              adminViewMode === "customizer"
+                ? "bg-indigo-600 text-white shadow-md ring-2 ring-indigo-400/40"
+                : "text-amber-300 hover:text-white hover:bg-slate-700/60"
+            }`}
+            title="Open Firebase Web Customizer to edit branding, hotlines, regions and styles"
+          >
+            <Palette className="w-3.5 h-3.5 text-amber-300" />
+            <span>Customize Web</span>
+            <span className="text-[9px] bg-amber-400/20 text-amber-300 font-mono px-1.5 py-0.2 rounded font-extrabold uppercase">
+              Firebase
+            </span>
+          </button>
         </div>
 
         {/* Audio Siren Controls & Global Actions */}
@@ -757,50 +833,65 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
         </div>
       </header>
 
-      {/* Stats Counter Row */}
-      <div className="bg-white border-b border-slate-200 py-4 px-4 sm:px-6">
-        <div className="max-w-7xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
-          <div className="bg-rose-50 border border-rose-100 rounded-2xl p-3.5 sm:p-4 flex items-center gap-3.5">
-            <div className="w-10 h-10 sm:w-11 sm:h-11 bg-rose-600 text-white rounded-xl flex items-center justify-center shadow">
-              <Radio className="w-5 h-5 sm:w-6 sm:h-6 animate-pulse" />
-            </div>
-            <div>
-              <span className="text-xl sm:text-2xl font-extrabold text-rose-700">{activeEmergencies.length}</span>
-              <p className="text-[10px] sm:text-xs text-rose-500 font-bold uppercase tracking-wide">Active SOS Alerts</p>
-            </div>
-          </div>
-
-          <div className="bg-amber-50 border border-amber-100 rounded-2xl p-3.5 sm:p-4 flex items-center gap-3.5">
-            <div className="w-10 h-10 sm:w-11 sm:h-11 bg-amber-500 text-white rounded-xl flex items-center justify-center shadow">
-              <AlertTriangle className="w-5 h-5 sm:w-6 sm:h-6" />
-            </div>
-            <div>
-              <span className="text-xl sm:text-2xl font-extrabold text-amber-700">{deviceLostUsers.length}</span>
-              <p className="text-[10px] sm:text-xs text-amber-600 font-bold uppercase tracking-wide">Device Lost Flags</p>
-            </div>
-          </div>
-
-          <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3.5 sm:p-4 flex items-center gap-3.5">
-            <div className="w-10 h-10 sm:w-11 sm:h-11 bg-slate-800 text-white rounded-xl flex items-center justify-center shadow">
-              <Users className="w-5 h-5 sm:w-6 sm:h-6" />
-            </div>
-            <div>
-              <span className="text-xl sm:text-2xl font-extrabold text-slate-800">{users.length}</span>
-              <p className="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Registered Citizens</p>
-            </div>
-          </div>
-
-          <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-3.5 sm:p-4 flex items-center gap-3.5">
-            <div className="w-10 h-10 sm:w-11 sm:h-11 bg-indigo-600 text-white rounded-xl flex items-center justify-center shadow">
-              <MapPin className="w-5 h-5 sm:w-6 sm:h-6 animate-bounce" />
-            </div>
-            <div>
-              <span className="text-xl sm:text-2xl font-extrabold text-indigo-700">{activeTrackerCount}</span>
-              <p className="text-[10px] sm:text-xs text-indigo-600 font-bold uppercase tracking-wide">Active GPS Targets</p>
-            </div>
-          </div>
+      {/* RENDER FIREBASE WEB CUSTOMIZER IF TAB IS SELECTED */}
+      {adminViewMode === "customizer" ? (
+        <div className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6">
+          <FirebaseWebCustomizer
+            currentConfig={siteConfig}
+            adminName={adminUser.fullName}
+            onConfigSaved={(updatedCfg) => {
+              setSiteConfig(updatedCfg);
+              addLog("✨ Firebase Site Customization successfully deployed!");
+            }}
+            onClose={() => setAdminViewMode("dispatch")}
+          />
         </div>
-      </div>
+      ) : (
+        <>
+          {/* Stats Counter Row */}
+          <div className="bg-white border-b border-slate-200 py-4 px-4 sm:px-6">
+            <div className="max-w-7xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
+              <div className="bg-rose-50 border border-rose-100 rounded-2xl p-3.5 sm:p-4 flex items-center gap-3.5">
+                <div className="w-10 h-10 sm:w-11 sm:h-11 bg-rose-600 text-white rounded-xl flex items-center justify-center shadow">
+                  <Radio className="w-5 h-5 sm:w-6 sm:h-6 animate-pulse" />
+                </div>
+                <div>
+                  <span className="text-xl sm:text-2xl font-extrabold text-rose-700">{activeEmergencies.length}</span>
+                  <p className="text-[10px] sm:text-xs text-rose-500 font-bold uppercase tracking-wide">Active SOS Alerts</p>
+                </div>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-100 rounded-2xl p-3.5 sm:p-4 flex items-center gap-3.5">
+                <div className="w-10 h-10 sm:w-11 sm:h-11 bg-amber-500 text-white rounded-xl flex items-center justify-center shadow">
+                  <AlertTriangle className="w-5 h-5 sm:w-6 sm:h-6" />
+                </div>
+                <div>
+                  <span className="text-xl sm:text-2xl font-extrabold text-amber-700">{deviceLostUsers.length}</span>
+                  <p className="text-[10px] sm:text-xs text-amber-600 font-bold uppercase tracking-wide">Device Lost Flags</p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3.5 sm:p-4 flex items-center gap-3.5">
+                <div className="w-10 h-10 sm:w-11 sm:h-11 bg-slate-800 text-white rounded-xl flex items-center justify-center shadow">
+                  <Users className="w-5 h-5 sm:w-6 sm:h-6" />
+                </div>
+                <div>
+                  <span className="text-xl sm:text-2xl font-extrabold text-slate-800">{users.length}</span>
+                  <p className="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Registered Citizens</p>
+                </div>
+              </div>
+
+              <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-3.5 sm:p-4 flex items-center gap-3.5">
+                <div className="w-10 h-10 sm:w-11 sm:h-11 bg-indigo-600 text-white rounded-xl flex items-center justify-center shadow">
+                  <MapPin className="w-5 h-5 sm:w-6 sm:h-6 animate-bounce" />
+                </div>
+                <div>
+                  <span className="text-xl sm:text-2xl font-extrabold text-indigo-700">{activeTrackerCount}</span>
+                  <p className="text-[10px] sm:text-xs text-indigo-600 font-bold uppercase tracking-wide">Active GPS Targets</p>
+                </div>
+              </div>
+            </div>
+          </div>
 
       {/* Main Layout Grid */}
       <div className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -1080,6 +1171,8 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
         </div>
 
       </div>
+      </>
+      )}
     </div>
   );
 }

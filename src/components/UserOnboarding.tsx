@@ -1,8 +1,10 @@
 import React, { useState } from "react";
 import { UserRole, UserProfile } from "../types";
 import { doc, setDoc } from "firebase/firestore";
-import { db, handleFirestoreError, OperationType } from "../firebase";
-import { Shield, Smartphone, Heart, ArrowRight, UserCheck } from "lucide-react";
+import { db } from "../firebase";
+import { Shield, Heart, ArrowRight, UserCheck, AlertCircle } from "lucide-react";
+import CountryPhoneInput from "./CountryPhoneInput";
+import { validatePhoneNumber } from "../utils/phoneValidator";
 
 interface UserOnboardingProps {
   uid: string;
@@ -13,6 +15,8 @@ interface UserOnboardingProps {
 export default function UserOnboarding({ uid, email, onComplete }: UserOnboardingProps) {
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
+  const [isPhoneValid, setIsPhoneValid] = useState(false);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [role, setRole] = useState<UserRole>("user");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,20 +26,29 @@ export default function UserOnboarding({ uid, email, onComplete }: UserOnboardin
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fullName.trim() || !phone.trim()) {
-      setError("Please fill in all requested onboarding elements.");
+    setError(null);
+
+    if (!fullName.trim()) {
+      setError("Please enter your Full Name.");
+      return;
+    }
+
+    if (!phone.trim() || !isPhoneValid) {
+      setError(
+        phoneError ||
+          "Please enter a valid contact phone number with the correct country code before continuing."
+      );
       return;
     }
 
     setLoading(true);
-    setError(null);
 
     const initialProfile: UserProfile = {
       uid,
       email,
       fullName: fullName.trim(),
       phone: phone.trim(),
-      role: isAdminAllowed ? role : "user", // Enforce standard user roles client-side as well
+      role: isAdminAllowed ? role : "user",
       status: "normal",
       updatedAt: new Date().toISOString(),
     };
@@ -71,8 +84,9 @@ export default function UserOnboarding({ uid, email, onComplete }: UserOnboardin
         {/* Form panel */}
         <form onSubmit={handleSubmit} className="p-6 md:p-8 space-y-6">
           {error && (
-            <div className="p-3 bg-red-50 text-red-800 text-xs font-bold border border-red-100 rounded-xl">
-              {error}
+            <div className="p-3 bg-red-50 text-red-800 text-xs font-bold border border-red-100 rounded-xl flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+              <span>{error}</span>
             </div>
           )}
 
@@ -81,7 +95,7 @@ export default function UserOnboarding({ uid, email, onComplete }: UserOnboardin
             {/* Full name */}
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
-                <span>👤 Full Name</span>
+                <span>👤 Full Name *</span>
               </label>
               <input
                 type="text"
@@ -93,26 +107,23 @@ export default function UserOnboarding({ uid, email, onComplete }: UserOnboardin
               />
             </div>
 
-            {/* Telephone number */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
-                <span>📞 Nepalese Mobile Number</span>
-              </label>
-              <div className="flex gap-2">
-                <span className="bg-slate-100 border border-slate-200 text-xs font-mono font-bold px-3 py-3 rounded-xl flex items-center">
-                  +977
-                </span>
-                <input
-                  type="tel"
-                  required
-                  placeholder="e.g. 9812345678"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="w-full text-sm px-4 py-3 border border-slate-200 rounded-xl outline-none focus:border-red-500 bg-slate-50 transition flex-1 font-mono"
-                />
-              </div>
-              <p className="text-[10px] text-slate-400">Used by police and rapid ambulance dispatch command to contact you in emergency.</p>
-            </div>
+            {/* Telephone number with country selector and validation */}
+            <CountryPhoneInput
+              id="onboarding-phone-input"
+              value={phone}
+              label="Contact Phone Number"
+              helperText="Emergency responders will use this number to contact and locate you."
+              onChange={(formatted, valid, err) => {
+                setPhone(formatted);
+                setIsPhoneValid(valid);
+                setPhoneError(err);
+                if (valid && error) {
+                  setError(null);
+                }
+              }}
+              required={true}
+              theme="light"
+            />
 
             {/* Admin toggle if eligible */}
             <div className="space-y-2 border-t pt-4">
@@ -169,8 +180,8 @@ export default function UserOnboarding({ uid, email, onComplete }: UserOnboardin
           {/* Form Actions */}
           <button
             type="submit"
-            disabled={loading}
-            className="w-full bg-red-600 hover:bg-red-700 transition font-extrabold text-sm text-white py-3.5 rounded-xl shadow-lg shadow-red-100 flex items-center justify-center gap-2 hover:translate-y-[-1px] disabled:opacity-50"
+            disabled={loading || (!isPhoneValid && phone.trim().length > 0)}
+            className="w-full bg-red-600 hover:bg-red-700 transition font-extrabold text-sm text-white py-3.5 rounded-xl shadow-lg shadow-red-100 flex items-center justify-center gap-2 hover:translate-y-[-1px] disabled:opacity-50 cursor-pointer"
           >
             <span>{loading ? "Registering..." : "Finalize Profile Registration"}</span>
             <ArrowRight className="w-4 h-4" />

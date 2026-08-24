@@ -60,8 +60,83 @@ export interface EmergencyAlert {
 }
 
 export interface NepalEmergencyContact {
+  id?: string;
   name: string;
   number: string;
   description: string;
   location: string;
+  icon?: "police" | "fire" | "ambulance" | "hospital" | "disaster" | "general";
+  category?: "national" | "local" | "hospital" | "disaster";
+  enabled?: boolean;
+}
+
+export type ThemeColor = "red" | "crimson" | "blue" | "emerald" | "amber" | "indigo" | "purple" | "slate";
+
+export interface QuickMapRegion {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  zoom: number;
+  description?: string;
+}
+
+export interface CrisisGuideItem {
+  id: string;
+  title: string;
+  category: string;
+  summary: string;
+  steps: string[];
+  helpline?: string;
+}
+
+export interface SiteConfig {
+  siteTitle: string;
+  siteTagline: string;
+  brandLogoText: string;
+  badgeText: string;
+  themeColor: ThemeColor;
+  organizationName: string;
+  footerNotice: string;
+  
+  // Emergency Broadcast Banner
+  bannerEnabled: boolean;
+  bannerText: string;
+  bannerType: "info" | "warning" | "critical" | "drill";
+  bannerActionText?: string;
+  bannerActionLink?: string;
+
+  // Contacts & Helplines
+  contacts: NepalEmergencyContact[];
+
+  // Map settings
+  defaultMapCenter: {
+    lat: number;
+    lng: number;
+  };
+  defaultMapZoom: number;
+  mapTheme: "standard" | "satellite" | "dark" | "light";
+  quickRegions: QuickMapRegion[];
+
+  // SOS protocols & guidelines
+  sosProtocols: {
+    police: string;
+    fire: string;
+    ambulance: string;
+    lost: string;
+  };
+
+  // Crisis safety guides
+  crisisGuides: CrisisGuideItem[];
+
+  // Feature flags
+  features: {
+    enableAudioSiren: boolean;
+    enableDesktopNotifications: boolean;
+    enableMultiDeviceTracking: boolean;
+    enablePublicGuestSOS: boolean;
+  };
+
+  updatedAt: string;
+  updatedBy?: string;
 }

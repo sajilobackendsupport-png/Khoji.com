@@ -1,8 +1,12 @@
 import { useState, useEffect, useRef } from "react";
-import { UserProfile, EmergencyAlert, EmergencyType, UserStatus } from "../types";
+import { UserProfile, EmergencyAlert, EmergencyType, UserStatus, SiteConfig } from "../types";
 import { collection, doc, updateDoc, addDoc, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 import { NEPAL_EMERGENCY_CONTACTS } from "../utils/nepalContacts";
+import {
+  subscribeSiteConfig,
+  getSiteConfigLocal,
+} from "../utils/siteConfig";
 import {
   calculateBearing,
   getCompassDirection,
@@ -42,6 +46,10 @@ import {
   Sliders,
   LocateFixed,
   AlertTriangle,
+  Megaphone,
+  BookOpen,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import TrackingMap from "./TrackingMap";
 import { soundEngine } from "../utils/alertSound";
@@ -86,6 +94,8 @@ const getDeviceName = () => {
 };
 
 export default function UserDashboard({ user, onLogout, onOpenProfileModal }: UserDashboardProps) {
+  const [siteConfig, setSiteConfig] = useState<SiteConfig>(getSiteConfigLocal());
+  const [showCrisisGuides, setShowCrisisGuides] = useState(false);
   const [status, setStatus] = useState<UserStatus>(user.status || "normal");
   const [location, setLocation] = useState<{
     lat: number;
@@ -114,6 +124,14 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
   const [showSimControls, setShowSimControls] = useState(false);
   const [isAutoWalking, setIsAutoWalking] = useState(false);
   const autoWalkIntervalRef = useRef<any>(null);
+
+  // Subscribe to real-time site configuration from Firebase
+  useEffect(() => {
+    const unsub = subscribeSiteConfig((cfg) => {
+      setSiteConfig(cfg);
+    });
+    return unsub;
+  }, []);
 
   // Initial Real GPS Acquisition & continuous watcher setup
   useEffect(() => {
@@ -585,6 +603,27 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
         </div>
       )}
 
+      {/* Emergency Broadcast Banner from Firebase */}
+      {siteConfig.bannerEnabled && siteConfig.bannerText && (
+        <div
+          className={`py-2.5 px-4 text-xs font-bold flex items-center justify-between gap-3 shadow-inner ${
+            siteConfig.bannerSeverity === "critical"
+              ? "bg-red-600 text-white animate-pulse"
+              : siteConfig.bannerSeverity === "warning"
+              ? "bg-amber-500 text-slate-950"
+              : "bg-blue-600 text-white"
+          }`}
+        >
+          <div className="flex items-center gap-2 max-w-7xl mx-auto flex-1 justify-center text-center">
+            <Megaphone className="w-4 h-4 flex-shrink-0" />
+            <span>{siteConfig.bannerText}</span>
+          </div>
+          <span className="text-[9px] uppercase font-mono px-2 py-0.5 rounded bg-black/20 text-white">
+            Broadcast
+          </span>
+        </div>
+      )}
+
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white border-b border-slate-100 px-4 sm:px-6 py-3.5 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-2.5">
@@ -593,13 +632,14 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
           </div>
           <div>
             <h1 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-1.5">
-              <span>Khoji</span>
-              <span className="text-red-600">.com</span>
+              <span>{siteConfig.brandLogoText || "Khoji.com"}</span>
               <span className="text-[10px] bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
-                Live Radar
+                {siteConfig.badgeText || "Live Radar"}
               </span>
             </h1>
-            <p className="text-[10px] text-slate-400 font-mono">NEPAL CITIZEN RESCUE GRID • ACTIVE</p>
+            <p className="text-[10px] text-slate-400 font-mono">
+              {siteConfig.siteTagline || "NEPAL CITIZEN RESCUE GRID • ACTIVE"}
+            </p>
           </div>
         </div>
 
@@ -758,18 +798,30 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
             </div>
           </div>
 
-          {/* Hotline contacts */}
-          <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm space-y-4 max-h-[260px] overflow-y-auto">
-            <h2 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
-              <Phone className="w-4 h-4 text-slate-700" />
-              <span>Nepalese Hotline Directory</span>
-            </h2>
+          {/* Hotline contacts dynamically synchronized via Firebase Web Customizer */}
+          <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm space-y-4 max-h-[300px] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                <Phone className="w-4 h-4 text-slate-700" />
+                <span>Nepalese Hotline Directory</span>
+              </h2>
+              <span className="text-[10px] text-slate-400 font-mono">
+                {siteConfig.contacts?.length || NEPAL_EMERGENCY_CONTACTS.length} verified
+              </span>
+            </div>
 
             <div className="space-y-3 divide-y divide-slate-100">
-              {NEPAL_EMERGENCY_CONTACTS.map((contact, idx) => (
+              {(siteConfig.contacts && siteConfig.contacts.length > 0 ? siteConfig.contacts : NEPAL_EMERGENCY_CONTACTS).map((contact, idx) => (
                 <div key={idx} className={`pt-2.5 ${idx === 0 ? "pt-0" : ""} flex items-start justify-between gap-2`}>
                   <div className="space-y-0.5">
-                    <span className="text-xs font-bold text-slate-800">{contact.name}</span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-bold text-slate-800">{contact.name}</span>
+                      {contact.category && (
+                        <span className="text-[8px] uppercase font-bold px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">
+                          {contact.category}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-[11px] text-slate-500 leading-normal">{contact.description}</p>
                     <span className="text-[9px] bg-slate-100 text-slate-500 font-medium px-1.5 py-0.5 rounded-full inline-block">
                       📍 {contact.location}
@@ -786,6 +838,40 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
               ))}
             </div>
           </div>
+
+          {/* Crisis Guides and Safety Protocols from Firebase Customizer */}
+          {siteConfig.crisisGuides && siteConfig.crisisGuides.length > 0 && (
+            <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm space-y-3">
+              <button
+                onClick={() => setShowCrisisGuides(!showCrisisGuides)}
+                className="w-full flex items-center justify-between text-left cursor-pointer"
+              >
+                <div className="flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-indigo-600" />
+                  <span className="text-xs font-extrabold text-slate-900">
+                    Nepal Crisis Safety Guides ({siteConfig.crisisGuides.length})
+                  </span>
+                </div>
+                {showCrisisGuides ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+              </button>
+
+              {showCrisisGuides && (
+                <div className="space-y-3 pt-2 divide-y divide-slate-100">
+                  {siteConfig.crisisGuides.map((guide) => (
+                    <div key={guide.id} className="pt-2 text-xs space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">{guide.icon || "🛡️"}</span>
+                        <h4 className="font-bold text-slate-800">{guide.title}</h4>
+                      </div>
+                      <p className="text-[11px] text-slate-600 whitespace-pre-line bg-slate-50 p-2.5 rounded-xl border border-slate-150">
+                        {guide.content}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Right Side: Map location & Real-Time GPS Tracking Controls */}

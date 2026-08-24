@@ -8,6 +8,7 @@ import { auth, googleProvider, db } from "../firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { UserProfile } from "../types";
 import { saveProfile } from "../utils/profileManager";
+import CountryPhoneInput from "./CountryPhoneInput";
 import {
   Shield,
   Radio,
@@ -46,6 +47,8 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
   const [passwordInput, setPasswordInput] = useState("");
   const [fullNameInput, setFullNameInput] = useState("");
   const [phoneInput, setPhoneInput] = useState("");
+  const [isPhoneValid, setIsPhoneValid] = useState(false);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
 
   // Custom Admin form state
   const [adminUsername, setAdminUsername] = useState("");
@@ -69,8 +72,16 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
     }
 
     if (authMode === "register") {
-      if (!fullNameInput.trim() || !phoneInput.trim()) {
-        setError("Please enter your Full Name and Nepal Mobile Number.");
+      if (!fullNameInput.trim()) {
+        setError("Please enter your Full Name.");
+        setLoading(false);
+        return;
+      }
+      if (!phoneInput.trim() || !isPhoneValid) {
+        setError(
+          phoneError ||
+            "Please enter a valid contact phone number with country code before registering."
+        );
         setLoading(false);
         return;
       }
@@ -478,22 +489,21 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
                     </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-mono">
-                      Nepal Phone Number
-                    </label>
-                    <div className="relative">
-                      <Smartphone className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
-                      <input
-                        type="tel"
-                        required
-                        placeholder="e.g. 9812345678"
-                        value={phoneInput}
-                        onChange={(e) => setPhoneInput(e.target.value)}
-                        className="w-full text-xs pl-10 pr-4 py-3 bg-slate-900/60 border border-slate-800 text-white rounded-xl focus:border-red-500 focus:outline-none transition font-mono"
-                      />
-                    </div>
-                  </div>
+                  {/* Country Code Picker & Validated Phone Input */}
+                  <CountryPhoneInput
+                    id="auth-register-phone-input"
+                    value={phoneInput}
+                    label="Contact Phone Number"
+                    helperText="Select your country code and enter mobile number."
+                    onChange={(formatted, valid, err) => {
+                      setPhoneInput(formatted);
+                      setIsPhoneValid(valid);
+                      setPhoneError(err);
+                      if (valid && error) setError(null);
+                    }}
+                    required={true}
+                    theme="dark"
+                  />
                 </>
               )}
 

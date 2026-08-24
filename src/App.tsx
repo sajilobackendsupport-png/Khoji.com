@@ -16,6 +16,7 @@ import {
   deleteProfile,
   clearAllProfiles,
 } from "./utils/profileManager";
+import { subscribeSiteConfig } from "./utils/siteConfig";
 import { Shield } from "lucide-react";
 
 export default function App() {
@@ -24,6 +25,16 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [showAuthModalForNewAccount, setShowAuthModalForNewAccount] = useState(false);
+
+  // Sync document title with Firebase site configuration in real time
+  useEffect(() => {
+    const unsub = subscribeSiteConfig((cfg) => {
+      if (cfg.siteTitle) {
+        document.title = cfg.siteTitle;
+      }
+    });
+    return unsub;
+  }, []);
 
   // Initialize session from saved profiles or Firebase Auth on mount
   useEffect(() => {
