@@ -46,52 +46,64 @@ class SoundEngine {
   }
 
   /**
-   * Plays a loud, pulsing dual-tone emergency siren
+   * Plays a loud, pulsing dual-tone emergency siren with smooth audio ramping and strict node cleanup
    */
   public playEmergencySiren(durationSeconds: number = 8) {
     if (this.isMuted) return;
     const ctx = this.getAudioContext();
     if (!ctx) return;
 
-    // Stop any existing siren first
+    // Stop any existing siren first to prevent audio accumulation & stutter
     this.stopSiren();
     this.isSirenPlaying = true;
 
     try {
       const masterGain = ctx.createGain();
-      masterGain.gain.setValueAtTime(0.3, ctx.currentTime);
+      masterGain.gain.setValueAtTime(0.25, ctx.currentTime);
       masterGain.connect(ctx.destination);
       this.activeGainNodes.push(masterGain);
 
       let step = 0;
       const playPulse = () => {
-        if (!this.isSirenPlaying || this.isMuted) return;
+        if (!this.isSirenPlaying || this.isMuted || !this.audioCtx) return;
 
+        // Clean up completed oscillators periodically
+        if (this.activeOscillators.length > 6) {
+          const oldOscs = this.activeOscillators.splice(0, this.activeOscillators.length - 4);
+          oldOscs.forEach((o) => {
+            try {
+              o.stop();
+              o.disconnect();
+            } catch {}
+          });
+        }
+
+        const now = ctx.currentTime;
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
 
-        // Alternating high/low piercing frequency (960Hz / 770Hz ambulance/police warble)
-        const freq = step % 2 === 0 ? 960 : 770;
+        // Alternating high/low piercing frequency (920Hz / 740Hz ambulance/police warble)
+        const freq = step % 2 === 0 ? 920 : 740;
         osc.type = "sawtooth";
-        osc.frequency.setValueAtTime(freq, ctx.currentTime);
+        osc.frequency.setValueAtTime(freq, now);
 
-        // Siren envelope
-        gain.gain.setValueAtTime(0.01, ctx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.35, ctx.currentTime + 0.05);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.38);
+        // Smooth siren envelope to avoid audio clicks
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.linearRampToValueAtTime(0.28, now + 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
 
         osc.connect(gain);
         gain.connect(masterGain);
 
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.4);
+        osc.start(now);
+        osc.stop(now + 0.38);
 
         this.activeOscillators.push(osc);
         step++;
       };
 
       playPulse();
-      this.sirenInterval = setInterval(playPulse, 420);
+      this.sirenInterval = setInterval(playPulse, 400);
 
       // Auto-stop after specified duration if not stopped manually
       if (durationSeconds > 0) {

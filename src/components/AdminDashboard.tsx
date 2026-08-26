@@ -35,6 +35,8 @@ import FirebaseWebCustomizer from "./FirebaseWebCustomizer";
 import FuzzySearchFilter from "./FuzzySearchFilter";
 import { BookmarkButton } from "../hooks/useSavedItems";
 import useTheme from "../hooks/useTheme";
+import EmergencyNotificationModal from "./EmergencyNotificationModal";
+import { identifyEmergencyAndTarget } from "../utils/emergencyTriage";
 import {
   soundEngine,
   sendBrowserNotification,
@@ -554,141 +556,54 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
   return (
     <div className="w-full min-h-screen bg-slate-50 flex flex-col font-sans relative" id="admin-dashboard-container">
 
-      {/* ================= CRITICAL EMERGENCY POPUP MODAL ================= */}
+      {/* ================= CRITICAL EMERGENCY POPUP MODAL (SMOOTH, NON-LAGGY WITH AUTO-CALL REDIRECT) ================= */}
       {activeAlertModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in font-sans">
-          <div className="bg-slate-900 border-2 border-red-600 rounded-3xl max-w-lg w-full p-6 text-white shadow-2xl space-y-5 relative overflow-hidden ring-4 ring-red-600/30">
-            {/* Pulsing red background glow */}
-            <div className="absolute top-0 right-0 w-64 h-64 bg-red-600/20 rounded-full blur-[80px] pointer-events-none" />
-
-            {/* Header */}
-            <div className="flex items-start justify-between relative z-10">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-red-600 flex items-center justify-center text-white shadow-lg animate-bounce">
-                  <AlertOctagon className="w-7 h-7" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-mono uppercase bg-red-600 text-white px-2 py-0.5 rounded-full font-extrabold animate-pulse">
-                      CRITICAL SOS ALERT
-                    </span>
-                    <span className="text-xs text-red-300 font-mono">
-                      {new Date(activeAlertModal.createdAt).toLocaleTimeString()}
-                    </span>
-                  </div>
-                  <h2 className="text-xl font-black text-white tracking-tight mt-0.5">
-                    {activeAlertModal.userName}
-                  </h2>
-                </div>
-              </div>
-
-              <button
-                onClick={() => setActiveAlertModal(null)}
-                className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-800 transition"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Emergency Details Box */}
-            <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-3 relative z-10">
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <span className="text-[10px] text-slate-400 uppercase font-bold block font-mono">Rescue Type</span>
-                  <span className="text-sm font-extrabold text-red-400 uppercase flex items-center gap-1.5 mt-0.5">
-                    <Radio className="w-3.5 h-3.5 animate-pulse" />
-                    {activeAlertModal.type} EMERGENCY
-                  </span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 uppercase font-bold block font-mono">Citizen Phone</span>
-                  <a
-                    href={`tel:${activeAlertModal.userPhone}`}
-                    className="text-sm font-extrabold text-emerald-400 hover:underline flex items-center gap-1 mt-0.5"
-                  >
-                    <Phone className="w-3.5 h-3.5" />
-                    {activeAlertModal.userPhone}
-                  </a>
-                </div>
-              </div>
-
-              {activeAlertModal.details && (
-                <div className="border-t border-slate-850 pt-2 text-xs text-slate-300 italic bg-slate-900/40 p-2.5 rounded-xl">
-                  "{activeAlertModal.details}"
-                </div>
-              )}
-
-              <div className="text-[11px] text-slate-400 flex items-center gap-2 font-mono">
-                <MapPin className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
-                <span>
-                  Lat: {activeAlertModal.location.lat.toFixed(5)}, Lng: {activeAlertModal.location.lng.toFixed(5)}
-                </span>
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 relative z-10 pt-1">
-              <button
-                onClick={() => {
-                  setSelectedEmergency(activeAlertModal);
-                  setSelectedUser(null);
-                  setActiveAlertModal(null);
-                  addLog(`Focused master map onto SOS incident: ${activeAlertModal.userName}`);
-                }}
-                className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs py-3 px-4 rounded-xl transition shadow-lg cursor-pointer"
-              >
-                <MapPin className="w-4 h-4" />
-                <span>Center & Track On Map</span>
-              </button>
-
-              <button
-                onClick={handleSilenceSiren}
-                className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-750 text-slate-200 font-extrabold text-xs py-3 px-4 rounded-xl transition border border-slate-700 cursor-pointer"
-              >
-                <VolumeX className="w-4 h-4 text-amber-400" />
-                <span>Silence Siren</span>
-              </button>
-
-              <a
-                href={`tel:${activeAlertModal.userPhone}`}
-                className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs py-2.5 px-4 rounded-xl transition shadow text-center cursor-pointer"
-              >
-                <Phone className="w-4 h-4" />
-                <span>Call Citizen Directly</span>
-              </a>
-
-              <button
-                onClick={() => resolveEmergency(activeAlertModal)}
-                disabled={loading[activeAlertModal.id]}
-                className="w-full flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs py-2.5 px-4 rounded-xl transition shadow disabled:opacity-50 cursor-pointer"
-              >
-                <CheckSquare className="w-4 h-4" />
-                <span>Resolve & Clear SOS</span>
-              </button>
-            </div>
-          </div>
-        </div>
+        <EmergencyNotificationModal
+          alert={activeAlertModal}
+          onClose={() => setActiveAlertModal(null)}
+          onResolve={(alert) => resolveEmergency(alert)}
+          onCenterMap={(alert) => {
+            setSelectedEmergency(alert);
+            setSelectedUser(null);
+            addLog(`Focused master map onto SOS incident: ${alert.userName}`);
+          }}
+          onSilenceSiren={handleSilenceSiren}
+          isSirenPlaying={isSirenSounding}
+          isLoading={Boolean(activeAlertModal && loading[activeAlertModal.id])}
+        />
       )}
 
-      {/* Dynamic blinking header alert when emergencies are active */}
+      {/* Dynamic header alert banner when emergencies are active */}
       {activeEmergencies.length > 0 && (
-        <div className="bg-rose-700 text-white font-black text-xs sm:text-sm py-2 px-4 text-center animate-pulse flex items-center justify-between z-40 shadow-md">
+        <div className="bg-rose-700 text-white font-extrabold text-xs sm:text-sm py-2 px-4 text-center flex items-center justify-between z-40 shadow-md">
           <div className="flex items-center gap-2 mx-auto">
-            <Radio className="w-4 h-4 animate-ping text-rose-200" />
+            <Radio className="w-4 h-4 text-rose-200" />
             <span>
               🚨 ALERT: {activeEmergencies.length} ACTIVE NEPAL EMERGENCY SOS SIGNAL(S) LIVE
             </span>
           </div>
 
-          {isSirenSounding && (
-            <button
-              onClick={handleSilenceSiren}
-              className="px-3 py-1 bg-white text-rose-800 font-extrabold text-xs rounded-lg hover:bg-rose-100 transition shadow flex items-center gap-1 cursor-pointer"
-            >
-              <VolumeX className="w-3.5 h-3.5" />
-              <span>Silence Siren</span>
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {activeAlertModal === null && activeEmergencies[0] && (
+              <button
+                onClick={() => setActiveAlertModal(activeEmergencies[0])}
+                className="px-2.5 py-1 bg-white text-rose-900 font-extrabold text-xs rounded-lg hover:bg-rose-50 transition shadow flex items-center gap-1 cursor-pointer"
+                title="Open emergency auto-dispatch view"
+              >
+                <span>Dispatch / Auto-Call</span>
+              </button>
+            )}
+
+            {isSirenSounding && (
+              <button
+                onClick={handleSilenceSiren}
+                className="px-3 py-1 bg-slate-900 text-white font-extrabold text-xs rounded-lg hover:bg-slate-800 transition shadow flex items-center gap-1 cursor-pointer border border-slate-700"
+              >
+                <VolumeX className="w-3.5 h-3.5 text-amber-400" />
+                <span>Silence Siren</span>
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -1000,57 +915,98 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
                 ✔️ No pending SOS dispatch requirements. All citizens safe.
               </div>
             ) : (
-              <div className="space-y-3.5">
-                {activeEmergencies.map((alert) => (
-                  <div
-                    key={alert.id}
-                    onClick={() => {
-                      setSelectedEmergency(alert);
-                      setSelectedUser(null);
-                    }}
-                    className={`p-3.5 rounded-2xl border transition cursor-pointer ${
-                      selectedEmergency?.id === alert.id
-                        ? "bg-rose-50/70 border-rose-300 ring-2 ring-rose-200"
-                        : "bg-slate-50/70 border-slate-200 hover:border-rose-300"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-extrabold text-slate-900">{alert.userName}</span>
-                      <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-rose-600 text-white font-mono shadow-sm">
-                        {alert.type}
-                      </span>
+              <div className="space-y-3">
+                {activeEmergencies.map((alert) => {
+                  const triage = identifyEmergencyAndTarget(alert);
+                  return (
+                    <div
+                      key={alert.id}
+                      onClick={() => {
+                        setSelectedEmergency(alert);
+                        setSelectedUser(null);
+                      }}
+                      className={`p-3.5 rounded-2xl border transition cursor-pointer ${
+                        selectedEmergency?.id === alert.id
+                          ? "bg-rose-50/70 border-rose-300 ring-2 ring-rose-200"
+                          : "bg-slate-50/70 border-slate-200 hover:border-rose-300"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-extrabold text-slate-900 truncate max-w-[160px]">
+                          {alert.userName}
+                        </span>
+                        <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-rose-600 text-white font-mono shadow-sm">
+                          {alert.type} SOS
+                        </span>
+                      </div>
+
+                      {/* Auto-identified Department & Quick Call */}
+                      <div className="bg-white/80 border border-slate-200/80 rounded-xl p-2 mb-2 flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <span className="text-[9px] font-mono text-slate-400 uppercase font-bold block truncate">
+                            Identified: {triage.categoryLabel}
+                          </span>
+                          <span className="text-[11px] font-black text-slate-800 truncate block">
+                            {triage.primaryAuthority}
+                          </span>
+                        </div>
+                        <a
+                          href={`tel:${triage.primaryPhone}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white font-mono font-black text-xs rounded-lg transition flex items-center gap-1 shadow-sm flex-shrink-0"
+                          title={`Call ${triage.primaryAuthority}`}
+                        >
+                          <Phone className="w-3 h-3" />
+                          <span>{triage.primaryPhone}</span>
+                        </a>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] text-slate-600 mb-1.5 font-bold">
+                        <a
+                          href={`tel:${alert.userPhone}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="hover:underline flex items-center gap-1 text-emerald-600"
+                        >
+                          <Phone className="w-3 h-3" />
+                          <span>Citizen: {alert.userPhone}</span>
+                        </a>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {new Date(alert.createdAt).toLocaleTimeString()}
+                        </span>
+                      </div>
+
+                      {alert.details && (
+                        <p className="text-[11px] text-slate-700 bg-white p-2 rounded-xl border border-slate-150 italic mb-2">
+                          "{alert.details}"
+                        </p>
+                      )}
+
+                      <div className="flex items-center justify-between pt-1 gap-1.5 flex-wrap">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveAlertModal(alert);
+                          }}
+                          className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] rounded-lg transition flex items-center gap-1 shadow-sm cursor-pointer"
+                        >
+                          <span>Auto-Dispatch</span>
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            resolveEmergency(alert);
+                          }}
+                          disabled={loading[alert.id]}
+                          className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-[10px] rounded-lg transition disabled:opacity-50 flex items-center gap-1 uppercase shadow-sm cursor-pointer ml-auto"
+                        >
+                          <CheckSquare className="w-3 h-3" />
+                          <span>{loading[alert.id] ? "Resolving..." : "Resolve"}</span>
+                        </button>
+                      </div>
                     </div>
-
-                    <p className="text-[11px] text-slate-600 mb-1.5 font-bold flex items-center gap-1">
-                      <Phone className="w-3 h-3 text-emerald-600" />
-                      <span>{alert.userPhone}</span>
-                    </p>
-
-                    {alert.details && (
-                      <p className="text-xs text-slate-700 bg-white p-2.5 rounded-xl border border-slate-150 italic mb-2.5">
-                        "{alert.details}"
-                      </p>
-                    )}
-
-                    <div className="flex items-center justify-between pt-1 gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          resolveEmergency(alert);
-                        }}
-                        disabled={loading[alert.id]}
-                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-[10px] rounded-xl transition disabled:opacity-50 flex items-center gap-1 uppercase shadow-sm cursor-pointer"
-                      >
-                        <CheckSquare className="w-3 h-3" />
-                        <span>{loading[alert.id] ? "Resolving..." : "Resolve Incident"}</span>
-                      </button>
-
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        {new Date(alert.createdAt).toLocaleTimeString()}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
