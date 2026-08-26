@@ -38,6 +38,10 @@ import useTheme from "../hooks/useTheme";
 import EmergencyNotificationModal from "./EmergencyNotificationModal";
 import { identifyEmergencyAndTarget } from "../utils/emergencyTriage";
 import {
+  getNearestProviderForAlert,
+  findNearestEmergencyProviders,
+} from "../utils/nearestEmergencyProviders";
+import {
   soundEngine,
   sendBrowserNotification,
   requestNotificationPermission,
@@ -556,10 +560,11 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
   return (
     <div className="w-full min-h-screen bg-slate-50 flex flex-col font-sans relative" id="admin-dashboard-container">
 
-      {/* ================= CRITICAL EMERGENCY POPUP MODAL (SMOOTH, NON-LAGGY WITH AUTO-CALL REDIRECT) ================= */}
+      {/* ================= CRITICAL EMERGENCY POPUP MODAL (DIRECTED TO USER DEVICE & CONTACT NUMBER) ================= */}
       {activeAlertModal && (
         <EmergencyNotificationModal
           alert={activeAlertModal}
+          userProfile={users.find((u) => u.uid === activeAlertModal.userId) || null}
           onClose={() => setActiveAlertModal(null)}
           onResolve={(alert) => resolveEmergency(alert)}
           onCenterMap={(alert) => {
@@ -918,6 +923,7 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
               <div className="space-y-3">
                 {activeEmergencies.map((alert) => {
                   const triage = identifyEmergencyAndTarget(alert);
+                  const nearestProvider = getNearestProviderForAlert(alert);
                   return (
                     <div
                       key={alert.id}
@@ -940,26 +946,51 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
                         </span>
                       </div>
 
-                      {/* Auto-identified Department & Quick Call */}
-                      <div className="bg-white/80 border border-slate-200/80 rounded-xl p-2 mb-2 flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <span className="text-[9px] font-mono text-slate-400 uppercase font-bold block truncate">
-                            Identified: {triage.categoryLabel}
-                          </span>
-                          <span className="text-[11px] font-black text-slate-800 truncate block">
-                            {triage.primaryAuthority}
-                          </span>
+                      {/* Nearest Emergency Provider Proximity Badge */}
+                      {nearestProvider ? (
+                        <div className="bg-red-50/90 border border-red-200/90 rounded-xl p-2 mb-2 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <span className="text-[9px] font-mono text-red-600 uppercase font-extrabold block truncate flex items-center gap-1">
+                              <span>📍 Nearest: {nearestProvider.distanceFormatted} ({nearestProvider.directionArrow} {nearestProvider.directionLabel})</span>
+                            </span>
+                            <span className="text-[11px] font-black text-slate-900 truncate block">
+                              {nearestProvider.provider.name}
+                            </span>
+                            <span className="text-[9px] text-slate-500 font-mono block truncate">
+                              {nearestProvider.provider.address}
+                            </span>
+                          </div>
+                          <a
+                            href={`tel:${nearestProvider.provider.phone}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white font-mono font-black text-xs rounded-lg transition flex items-center gap-1 shadow-sm flex-shrink-0"
+                            title={`Call nearest station ${nearestProvider.provider.name}`}
+                          >
+                            <Phone className="w-3 h-3" />
+                            <span>{nearestProvider.provider.phone}</span>
+                          </a>
                         </div>
-                        <a
-                          href={`tel:${triage.primaryPhone}`}
-                          onClick={(e) => e.stopPropagation()}
-                          className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white font-mono font-black text-xs rounded-lg transition flex items-center gap-1 shadow-sm flex-shrink-0"
-                          title={`Call ${triage.primaryAuthority}`}
-                        >
-                          <Phone className="w-3 h-3" />
-                          <span>{triage.primaryPhone}</span>
-                        </a>
-                      </div>
+                      ) : (
+                        <div className="bg-white/80 border border-slate-200/80 rounded-xl p-2 mb-2 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <span className="text-[9px] font-mono text-slate-400 uppercase font-bold block truncate">
+                              Identified: {triage.categoryLabel}
+                            </span>
+                            <span className="text-[11px] font-black text-slate-800 truncate block">
+                              {triage.primaryAuthority}
+                            </span>
+                          </div>
+                          <a
+                            href={`tel:${triage.primaryPhone}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white font-mono font-black text-xs rounded-lg transition flex items-center gap-1 shadow-sm flex-shrink-0"
+                            title={`Call ${triage.primaryAuthority}`}
+                          >
+                            <Phone className="w-3 h-3" />
+                            <span>{triage.primaryPhone}</span>
+                          </a>
+                        </div>
+                      )}
 
                       <div className="flex items-center justify-between text-[11px] text-slate-600 mb-1.5 font-bold">
                         <a
@@ -981,7 +1012,29 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
                         </p>
                       )}
 
-                      <div className="flex items-center justify-between pt-1 gap-1.5 flex-wrap">
+                      <div className="flex items-center justify-between pt-2 gap-1.5 flex-wrap border-t border-slate-200/60 mt-1">
+                        {nearestProvider && (
+                          <a
+                            href={`tel:${nearestProvider.provider.phone}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white font-extrabold text-[10px] rounded-lg transition flex items-center gap-1 shadow-sm cursor-pointer"
+                            title={`Call nearest station ${nearestProvider.provider.name} (${nearestProvider.distanceFormatted})`}
+                          >
+                            <Phone className="w-3 h-3" />
+                            <span>Station ({nearestProvider.distanceFormatted})</span>
+                          </a>
+                        )}
+
+                        <a
+                          href={`tel:${alert.userPhone}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[10px] rounded-lg transition flex items-center gap-1 shadow-sm cursor-pointer"
+                          title={`Call citizen ${alert.userName} at ${alert.userPhone}`}
+                        >
+                          <Phone className="w-3 h-3" />
+                          <span>Call User</span>
+                        </a>
+
                         <button
                           onClick={(e) => {
                             e.stopPropagation();

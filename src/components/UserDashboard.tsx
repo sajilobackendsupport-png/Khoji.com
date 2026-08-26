@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { UserProfile, EmergencyAlert, EmergencyType, UserStatus, SiteConfig } from "../types";
 import { collection, doc, updateDoc, addDoc, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
@@ -58,6 +58,11 @@ import TrackingMap from "./TrackingMap";
 import { soundEngine } from "../utils/alertSound";
 import FuzzySearchFilter from "./FuzzySearchFilter";
 import { BookmarkButton } from "../hooks/useSavedItems";
+import {
+  findNearestEmergencyProviders,
+  NearestProviderResult,
+} from "../utils/nearestEmergencyProviders";
+import { Building2 } from "lucide-react";
 import useTheme from "../hooks/useTheme";
 
 interface UserDashboardProps {
@@ -366,6 +371,28 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
         [`devices.${dId}`]: localDeviceEntry,
         updatedAt: new Date().toISOString(),
       });
+
+      // Synchronize live moving coordinates to any active emergency alerts
+      const activeEmergencies = emergencies.filter((e) => e.status === "active");
+      if (activeEmergencies.length > 0) {
+        const updatedEmergencies = emergencies.map((e) =>
+          e.status === "active" ? { ...e, location: { lat, lng } } : e
+        );
+        setEmergencies(updatedEmergencies);
+        localStorage.setItem(`khoji_emergencies_${user.uid}`, JSON.stringify(updatedEmergencies));
+
+        // Update active emergencies in Firestore
+        for (const activeEm of activeEmergencies) {
+          try {
+            const emDocRef = doc(db, "emergencies", activeEm.id);
+            await updateDoc(emDocRef, {
+              location: { lat, lng },
+            });
+          } catch (e) {
+            // non-blocking
+          }
+        }
+      }
     } catch (error) {
       console.warn("Firestore GPS update notice:", error);
     }
@@ -600,6 +627,11 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
 
   const compassData = getCompassDirection(location.heading);
 
+  // Live Nearest Emergency Service Providers based on real GPS
+  const nearestProviders = useMemo(() => {
+    return findNearestEmergencyProviders(location.lat, location.lng, "all", 3);
+  }, [location.lat, location.lng]);
+
   return (
     <div className="w-full min-h-screen bg-slate-50 flex flex-col font-sans" id="user-dashboard-wrapper">
       {/* Alert bar when in emergency */}
@@ -812,6 +844,58 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
               >
                 ⚠️ Device Stolen Map Alert
               </button>
+            </div>
+          </div>
+
+          {/* NEAREST EMERGENCY SERVICE PROVIDERS TO CITIZEN GPS */}
+          <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm space-y-3">
+            <div className="flex items-center justify-between border-b pb-2">
+              <h2 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-red-600" />
+                <span>Nearest Emergency Stations (Live GPS)</span>
+              </h2>
+              <span className="text-[10px] bg-red-50 text-red-700 font-mono font-bold px-2 py-0.5 rounded-full border border-red-100">
+                GPS Proximity
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-500">
+              Closest emergency response stations calculated directly from your device's live coordinates:
+            </p>
+
+            <div className="space-y-2">
+              {nearestProviders.map((item) => (
+                <div
+                  key={item.provider.id}
+                  className="p-3 bg-slate-50 hover:bg-slate-100/80 border border-slate-200/80 rounded-xl transition flex items-center justify-between gap-2.5"
+                >
+                  <div className="space-y-0.5 min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-sm">{item.provider.icon}</span>
+                      <span className="text-xs font-black text-slate-900 truncate">{item.provider.name}</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 flex items-center gap-2 font-mono flex-wrap">
+                      <span className="text-red-600 font-bold">
+                        📍 {item.distanceFormatted} ({item.directionArrow} {item.directionLabel})
+                      </span>
+                      <span>•</span>
+                      <span className="text-emerald-700 font-semibold">~{item.estimatedEtaMinutes}m response ETA</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 font-mono block truncate">
+                      {item.provider.address}
+                    </span>
+                  </div>
+
+                  <a
+                    href={`tel:${item.provider.phone}`}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white font-mono font-black text-xs rounded-xl transition shadow-sm flex-shrink-0 cursor-pointer"
+                    title={`Call ${item.provider.name} immediately`}
+                  >
+                    <Phone className="w-3.5 h-3.5" />
+                    <span>{item.provider.phone}</span>
+                  </a>
+                </div>
+              ))}
             </div>
           </div>
 
