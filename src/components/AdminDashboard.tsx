@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import TrackingMap from "./TrackingMap";
 import FirebaseWebCustomizer from "./FirebaseWebCustomizer";
+import AdminUserDirectoryAndRequests from "./AdminUserDirectoryAndRequests";
 import FuzzySearchFilter from "./FuzzySearchFilter";
 import { BookmarkButton } from "../hooks/useSavedItems";
 import useTheme from "../hooks/useTheme";
@@ -51,6 +52,7 @@ import {
   getSiteConfigLocal,
   DEFAULT_SITE_CONFIG,
 } from "../utils/siteConfig";
+import { Clock, ArrowRightLeft } from "lucide-react";
 
 interface AdminDashboardProps {
   adminUser: UserProfile;
@@ -69,8 +71,8 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
   const [loading, setLoading] = useState<{ [key: string]: boolean }>({});
   const [sysLog, setSysLog] = useState<{ id: string; msg: string; time: string }[]>([]);
 
-  // Navigation View Tab: Dispatch Map vs Firebase Customizer vs Citizen Management
-  const [adminViewMode, setAdminViewMode] = useState<"dispatch" | "customizer" | "citizens">("dispatch");
+  // Navigation View Tab: Dispatch Map vs Service Requests vs Citizen Management vs Firebase Customizer
+  const [adminViewMode, setAdminViewMode] = useState<"dispatch" | "requests" | "citizens" | "customizer">("dispatch");
   const [siteConfig, setSiteConfig] = useState<SiteConfig>(getSiteConfigLocal());
 
   // Sound & Notification state
@@ -546,6 +548,68 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
   const deviceLostUsers = trackedDevices.filter((u) => u.status === "lost");
   const activeTrackerCount = trackedDevices.filter((u) => u.lastLocation).length;
 
+  // Action: Redirect or re-route emergency service for a citizen
+  const handleRedirectEmergencyService = async (
+    alert: EmergencyAlert,
+    newType: any,
+    notes: string
+  ) => {
+    const catMap: Record<string, "police" | "medical" | "fire" | "all"> = {
+      police: "police",
+      ambulance: "medical",
+      fire: "fire",
+      lost: "police",
+    };
+    const nearestList = findNearestEmergencyProviders(
+      alert.location?.lat || 27.7172,
+      alert.location?.lng || 85.324,
+      catMap[newType] || "all",
+      1
+    );
+    const nearest = nearestList[0] || null;
+
+    const serviceNames: Record<string, string> = {
+      police: "Nepal Police Dispatch (100)",
+      ambulance: "Emergency Medical Ambulance (102)",
+      fire: "Fire & Rescue Brigade (101)",
+      lost: "Search & Rescue / Lost Device (1155)",
+    };
+    const defaultPhones: Record<string, string> = {
+      police: "100",
+      ambulance: "102",
+      fire: "101",
+      lost: "1155",
+    };
+
+    const updateData: Partial<EmergencyAlert> = {
+      type: newType,
+      serviceName: serviceNames[newType] || `${newType.toUpperCase()} Emergency`,
+      servicePhone: defaultPhones[newType] || "100",
+      nearestStation: nearest ? nearest.provider.name : undefined,
+      nearestStationPhone: nearest ? nearest.provider.phone : undefined,
+      nearestStationDistance: nearest ? nearest.distanceFormatted : undefined,
+      redirectedToService: serviceNames[newType],
+      adminNotes: notes
+        ? `${notes} (Redirected by Dispatcher at ${new Date().toLocaleTimeString()})`
+        : `Redirected to ${newType} service at ${new Date().toLocaleTimeString()}`,
+    };
+
+    // Update local state
+    setEmergencies((prev) =>
+      prev.map((e) => (e.id === alert.id ? { ...e, ...updateData } : e))
+    );
+
+    // Update in Firestore
+    try {
+      const emRef = doc(db, "emergencies", alert.id);
+      await updateDoc(emRef, updateData);
+      addLog(`🔄 Redirected emergency [${alert.userName}] to ${serviceNames[newType]}.`);
+    } catch (err) {
+      console.warn("Redirect notice:", err);
+      addLog(`Emergency redirected locally.`);
+    }
+  };
+
   // Render filtering for directories
   const queriedUsers = trackedDevices.filter((user) => {
     const matchesSearch =
@@ -652,8 +716,8 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
           </div>
         </div>
 
-        {/* Navigation Tabs (Dispatch Grid vs Firebase Web Customizer vs Citizens) */}
-        <div className="flex items-center bg-slate-800/90 p-1 rounded-2xl border border-slate-700/80">
+        {/* Navigation Tabs (Dispatch Radar vs Service Requests Timeline vs Citizen Registry vs Firebase Customizer) */}
+        <div className="flex items-center bg-slate-800/90 p-1 rounded-2xl border border-slate-700/80 gap-1 flex-wrap">
           <button
             onClick={() => setAdminViewMode("dispatch")}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
@@ -667,6 +731,44 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
           </button>
 
           <button
+            onClick={() => setAdminViewMode("requests")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+              adminViewMode === "requests"
+                ? "bg-red-600 text-white shadow-md ring-2 ring-red-400/40"
+                : "text-slate-300 hover:text-white hover:bg-slate-700/60"
+            }`}
+            title="View all citizen emergency requests with exact timestamps, services requested, and nearest stations"
+          >
+            <Clock className="w-3.5 h-3.5 text-amber-400" />
+            <span>Service Requests</span>
+            {emergencies.length > 0 && (
+              <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded font-extrabold ${
+                activeEmergencies.length > 0
+                  ? "bg-red-500 text-white animate-pulse"
+                  : "bg-slate-700 text-slate-300"
+              }`}>
+                {activeEmergencies.length > 0 ? `${activeEmergencies.length} Active` : emergencies.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setAdminViewMode("citizens")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+              adminViewMode === "citizens"
+                ? "bg-blue-600 text-white shadow-md ring-2 ring-blue-400/40"
+                : "text-slate-300 hover:text-white hover:bg-slate-700/60"
+            }`}
+            title="View registered citizen profiles, emergency contacts, blood groups, and verified devices"
+          >
+            <Users className="w-3.5 h-3.5 text-blue-400" />
+            <span>Citizen Profiles</span>
+            <span className="text-[10px] bg-blue-900/60 text-blue-300 font-mono px-1.5 py-0.2 rounded font-extrabold">
+              {users.length}
+            </span>
+          </button>
+
+          <button
             onClick={() => setAdminViewMode("customizer")}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
               adminViewMode === "customizer"
@@ -676,7 +778,7 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
             title="Open Firebase Web Customizer to edit branding, hotlines, regions and styles"
           >
             <Palette className="w-3.5 h-3.5 text-amber-300" />
-            <span>Customize Web</span>
+            <span className="hidden sm:inline">Customize Web</span>
             <span className="text-[9px] bg-amber-400/20 text-amber-300 font-mono px-1.5 py-0.2 rounded font-extrabold uppercase">
               Firebase
             </span>
@@ -781,6 +883,31 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
               addLog("✨ Firebase Site Customization successfully deployed!");
             }}
             onClose={() => setAdminViewMode("dispatch")}
+          />
+        </div>
+      ) : adminViewMode === "requests" || adminViewMode === "citizens" ? (
+        <div className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6">
+          <AdminUserDirectoryAndRequests
+            users={users}
+            emergencies={emergencies}
+            onSelectEmergency={(alert) => {
+              setSelectedEmergency(alert);
+              setSelectedUser(null);
+              setAdminViewMode("dispatch");
+              addLog(`Focused master radar on emergency incident: [${alert.userName} - ${alert.type.toUpperCase()}].`);
+            }}
+            onSelectUser={(targetUser) => {
+              setSelectedUser(targetUser);
+              setSelectedEmergency(null);
+              setAdminViewMode("dispatch");
+              addLog(`Focused master radar on citizen: [${targetUser.fullName}].`);
+            }}
+            onResolveEmergency={(alert) => resolveEmergency(alert)}
+            onRedirectEmergencyService={(alert, newType, notes) =>
+              handleRedirectEmergencyService(alert, newType, notes)
+            }
+            onResetUserStatus={(targetUser) => manualResetProfile(targetUser)}
+            isDark={isDark}
           />
         </div>
       ) : (

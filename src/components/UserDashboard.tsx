@@ -62,6 +62,7 @@ import {
   findNearestEmergencyProviders,
   NearestProviderResult,
 } from "../utils/nearestEmergencyProviders";
+import UserDeviceDialerModal from "./UserDeviceDialerModal";
 import { Building2 } from "lucide-react";
 import useTheme from "../hooks/useTheme";
 
@@ -129,6 +130,7 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
 
   const [details, setDetails] = useState("");
   const [emergencies, setEmergencies] = useState<EmergencyAlert[]>([]);
+  const [activeDialerAlert, setActiveDialerAlert] = useState<EmergencyAlert | null>(null);
   const [loading, setLoading] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
   const [gpsLockActive, setGpsLockActive] = useState(true);
@@ -535,11 +537,34 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
     }
   };
 
-  // Trigger emergency alert SOS in Firestore
+  // Trigger emergency alert SOS in Firestore & initiate auto-dial on user's device
   const triggerSOS = async (type: EmergencyType) => {
     setLoading(true);
     const dId = getDeviceId();
+    const dName = getDeviceName();
     const alertId = `emergency-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+    const catMap: Record<string, "police" | "medical" | "fire" | "all"> = {
+      police: "police",
+      ambulance: "medical",
+      fire: "fire",
+      lost: "police",
+    };
+    const nearestList = findNearestEmergencyProviders(location.lat, location.lng, catMap[type] || "all", 1);
+    const nearest = nearestList[0] || null;
+
+    const serviceNames: Record<EmergencyType, string> = {
+      police: "Nepal Police Dispatch (100)",
+      ambulance: "Emergency Medical Ambulance (102)",
+      fire: "Fire & Rescue Brigade (101)",
+      lost: "Search & Rescue / Lost Device (1155)",
+    };
+    const defaultPhones: Record<EmergencyType, string> = {
+      police: "100",
+      ambulance: "102",
+      fire: "101",
+      lost: "1155",
+    };
 
     const newAlert: EmergencyAlert = {
       id: alertId,
@@ -547,13 +572,21 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
       userName: user.fullName,
       userPhone: user.phone,
       type,
+      serviceName: serviceNames[type],
+      servicePhone: defaultPhones[type],
+      nearestStation: nearest ? nearest.provider.name : undefined,
+      nearestStationPhone: nearest ? nearest.provider.phone : undefined,
+      nearestStationDistance: nearest ? nearest.distanceFormatted : undefined,
       status: "active" as const,
       location: {
         lat: location.lat,
         lng: location.lng,
       },
+      address: location.address || `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`,
       details: details.trim() || `Urgent ${type} rescue requested in Nepal. Location: ${location.address || `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`}`,
       deviceId: dId,
+      deviceName: dName,
+      dialTriggeredOnUserDevice: true,
       createdAt: new Date().toISOString(),
     };
 
@@ -571,6 +604,9 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
     const targetStatus: UserStatus = type === "lost" ? "lost" : "emergency";
     setStatus(targetStatus);
     soundEngine.playEmergencySiren(4);
+
+    // Prompt user device auto-dialer modal immediately
+    setActiveDialerAlert(newAlert);
 
     try {
       await addDoc(collection(db, "emergencies"), newAlert);
@@ -632,13 +668,50 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
     return findNearestEmergencyProviders(location.lat, location.lng, "all", 3);
   }, [location.lat, location.lng]);
 
+  const activeEmergency = emergencies.find((e) => e.status === "active");
+
   return (
-    <div className="w-full min-h-screen bg-slate-50 flex flex-col font-sans" id="user-dashboard-wrapper">
-      {/* Alert bar when in emergency */}
+    <div className="w-full min-h-screen bg-slate-50 flex flex-col font-sans relative" id="user-dashboard-wrapper">
+      {/* Auto-Dialing Modal triggered on user's device */}
+      {activeDialerAlert && (
+        <UserDeviceDialerModal
+          alert={activeDialerAlert}
+          user={user}
+          onClose={() => setActiveDialerAlert(null)}
+          onResolve={async (alertToResolve) => {
+            await changeStatus("normal");
+            setActiveDialerAlert(null);
+            // resolve in Firestore
+            try {
+              const emRef = doc(db, "emergencies", alertToResolve.id);
+              await updateDoc(emRef, {
+                status: "resolved",
+                resolvedAt: new Date().toISOString(),
+              });
+            } catch (e) {
+              // local fallback
+            }
+          }}
+        />
+      )}
+
+      {/* Alert bar when in emergency with direct device dialer button */}
       {status === "emergency" && (
-        <div className="bg-red-600 text-white font-semibold text-center text-sm py-2.5 animate-pulse flex items-center justify-center gap-2 z-50 shadow-md">
-          <Radio className="w-4 h-4 animate-ping" />
-          <span>ACTIVE EMERGENCY BROADCAST: Dispatch Center is tracking your real coordinates and heading in real time.</span>
+        <div className="bg-red-600 text-white font-semibold text-center text-xs sm:text-sm py-2.5 px-4 animate-pulse flex items-center justify-between gap-2 z-40 shadow-md">
+          <div className="flex items-center gap-2 mx-auto">
+            <Radio className="w-4 h-4 animate-ping" />
+            <span>ACTIVE EMERGENCY BROADCAST: Dispatch Center is tracking your real coordinates in real time.</span>
+          </div>
+          {activeEmergency && (
+            <button
+              onClick={() => setActiveDialerAlert(activeEmergency)}
+              className="px-3 py-1 bg-white text-red-700 font-extrabold text-xs rounded-xl shadow hover:bg-red-50 transition cursor-pointer flex items-center gap-1 flex-shrink-0"
+              title="Open auto-dialer to call emergency services from your device"
+            >
+              <Phone className="w-3.5 h-3.5" />
+              <span>Dial on My Device</span>
+            </button>
+          )}
         </div>
       )}
 

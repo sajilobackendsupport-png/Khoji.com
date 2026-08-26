@@ -34,8 +34,15 @@ export interface UserProfile {
   phone: string;
   role: UserRole;
   status: UserStatus;
+  bloodGroup?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  address?: string;
+  medicalNotes?: string;
+  citizenshipNumber?: string;
   lastLocation?: UserLocation;
   devices?: { [deviceId: string]: DeviceInfo };
+  createdAt?: string;
   updatedAt: string;
 }
 
@@ -48,15 +55,26 @@ export interface EmergencyAlert {
   userName: string;
   userPhone: string;
   type: EmergencyType;
+  serviceName?: string;
+  servicePhone?: string;
+  nearestStation?: string;
+  nearestStationPhone?: string;
+  nearestStationDistance?: string;
   status: EmergencyStatus;
   location: {
     lat: number;
     lng: number;
   };
+  address?: string;
   details: string;
   deviceId?: string;
+  deviceName?: string;
+  dialTriggeredOnUserDevice?: boolean;
+  redirectedToService?: string;
+  adminNotes?: string;
   createdAt: string;
   resolvedAt?: string;
+  resolvedBy?: string;
 }
 
 export interface NepalEmergencyContact {
