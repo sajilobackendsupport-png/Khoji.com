@@ -26,9 +26,15 @@ import {
   Palette,
   LayoutDashboard,
   Megaphone,
+  Moon,
+  Sun,
+  Bookmark,
 } from "lucide-react";
 import TrackingMap from "./TrackingMap";
 import FirebaseWebCustomizer from "./FirebaseWebCustomizer";
+import FuzzySearchFilter from "./FuzzySearchFilter";
+import { BookmarkButton } from "../hooks/useSavedItems";
+import useTheme from "../hooks/useTheme";
 import {
   soundEngine,
   sendBrowserNotification,
@@ -47,6 +53,7 @@ interface AdminDashboardProps {
 }
 
 export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal }: AdminDashboardProps) {
+  const { isDark, toggleTheme } = useTheme();
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [emergencies, setEmergencies] = useState<EmergencyAlert[]>([]);
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
@@ -758,6 +765,16 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
 
         {/* Audio Siren Controls & Global Actions */}
         <div className="flex items-center flex-wrap gap-2">
+          {/* Theme Toggle */}
+          <button
+            onClick={toggleTheme}
+            id="admin-theme-toggle-btn"
+            className="p-1.5 text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition cursor-pointer border border-slate-700"
+            title={`Switch to ${isDark ? "Light" : "Dark"} mode`}
+          >
+            {isDark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-300" />}
+          </button>
+
           {/* Siren Mute / Unmute Button */}
           <button
             onClick={handleToggleMute}
@@ -1038,47 +1055,29 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
             )}
           </div>
 
-          {/* Section: USER TRACKING DIRECTORY */}
-          <div className="bg-white rounded-3xl border border-slate-150 shadow-sm p-5 space-y-4 flex-1 flex flex-col min-h-[350px]">
-            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700 flex items-center gap-1.5 border-b pb-2">
-              <Users className="w-4 h-4 text-slate-500" />
-              <span>Registered Citizens Directory</span>
-            </h3>
-
-            {/* Filters and search box */}
-            <div className="space-y-2">
-              <div className="relative">
-                <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Query citizen name, phone, email..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full text-xs pl-8 pr-3 py-2 border rounded-xl focus:border-indigo-500 outline-none transition bg-slate-50"
-                />
-              </div>
-
-              {/* Status categories filters */}
-              <div className="grid grid-cols-4 gap-1">
-                {(["all", "emergency", "lost", "normal"] as const).map((type) => (
-                  <button
-                    key={type}
-                    onClick={() => setFilterType(type)}
-                    className={`text-[9px] font-extrabold py-1 px-1 border rounded-lg transition text-center uppercase truncate cursor-pointer ${
-                      filterType === type
-                        ? "bg-slate-900 border-slate-900 text-white shadow-sm"
-                        : "bg-slate-50 hover:bg-slate-100 text-slate-600"
-                    }`}
-                  >
-                    {type}
-                  </button>
-                ))}
-              </div>
+          {/* Section: USER TRACKING DIRECTORY WITH FUZZY SEARCH & FILTERS */}
+          <div className="bg-white rounded-3xl border border-slate-150 shadow-sm p-5 space-y-4 flex-1 flex flex-col min-h-[380px]">
+            <div className="flex items-center justify-between border-b pb-2">
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-slate-500" />
+                <span>Registered Citizens Directory</span>
+              </h3>
+              <span className="text-[10px] text-slate-400 font-mono">
+                {trackedDevices.length} targets
+              </span>
             </div>
 
-            {/* Lists area */}
-            <div className="space-y-2 flex-1 overflow-y-auto max-h-[220px] xl:max-h-[300px]">
-              {queriedUsers.map((user) => {
+            <FuzzySearchFilter
+              items={trackedDevices}
+              searchKeys={["fullName", "rawName", "phone", "email", "deviceName", "status"]}
+              placeholder="Fuzzy search citizens (e.g. 'bikash', '9851', 'lost')..."
+              categoryKey="status"
+              titleKey="fullName"
+              dateKey="updatedAt"
+              debounceMs={250}
+              fuzzyThreshold={0.35}
+              showCategoryPills={true}
+              renderItem={(user, _idx, meta) => {
                 const isActiveTarget = selectedUser?.uid === user.uid;
                 return (
                   <div
@@ -1096,23 +1095,34 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
                     <div className="space-y-1 truncate pr-2 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {/* Status blinking indicator lamp */}
-                        <span className={`w-2 h-2 rounded-full inline-block ${
-                          user.status === "emergency"
-                            ? "bg-rose-500 animate-ping"
-                            : user.status === "lost"
-                            ? "bg-amber-400 animate-pulse"
-                            : "bg-emerald-500"
-                        }`} />
-                        <span className="text-xs font-extrabold text-slate-800 block truncate">{user.rawName}</span>
-                        <span className={`text-[8px] font-extrabold uppercase px-1.5 py-0.5 rounded-full border ${
-                          user.status === "emergency"
-                            ? "bg-rose-100 text-rose-800 border-rose-200"
-                            : user.status === "lost"
-                            ? "bg-amber-50 text-amber-800 border-amber-200"
-                            : "bg-emerald-50 text-emerald-800 border-emerald-200"
-                        }`}>
+                        <span
+                          className={`w-2 h-2 rounded-full inline-block ${
+                            user.status === "emergency"
+                              ? "bg-rose-500 animate-ping"
+                              : user.status === "lost"
+                              ? "bg-amber-400 animate-pulse"
+                              : "bg-emerald-500"
+                          }`}
+                        />
+                        <span className="text-xs font-extrabold text-slate-800 block truncate">
+                          {user.rawName || user.fullName}
+                        </span>
+                        <span
+                          className={`text-[8px] font-extrabold uppercase px-1.5 py-0.5 rounded-full border ${
+                            user.status === "emergency"
+                              ? "bg-rose-100 text-rose-800 border-rose-200"
+                              : user.status === "lost"
+                              ? "bg-amber-50 text-amber-800 border-amber-200"
+                              : "bg-emerald-50 text-emerald-800 border-emerald-200"
+                          }`}
+                        >
                           {user.status}
                         </span>
+                        {meta.isFuzzyMatch && meta.searchScore !== undefined && (
+                          <span className="text-[8px] font-mono font-semibold px-1 py-0.2 rounded bg-blue-100 text-blue-700">
+                            match {(100 - meta.searchScore * 100).toFixed(0)}%
+                          </span>
+                        )}
                       </div>
 
                       {/* Sub-details: device info & sync rate */}
@@ -1138,34 +1148,40 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
 
                     {/* Actions for manual resetting group */}
                     <div className="flex flex-col gap-1 items-end ml-2 group-hover:opacity-100 transition whitespace-nowrap">
-                      {user.status !== "normal" ? (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            manualResetProfile(user);
+                      <div className="flex items-center gap-1">
+                        <BookmarkButton
+                          item={{
+                            id: `citizen-${user.uid}`,
+                            title: user.fullName || user.rawName || "Citizen Target",
+                            category: user.status,
+                            description: `Phone: ${user.phone} • Device: ${user.deviceName || "Primary"}`,
                           }}
-                          disabled={loading[user.uid]}
-                          className="px-2.5 py-1 bg-slate-900 text-white text-[9px] font-extrabold rounded-lg hover:bg-slate-800 transition shadow disabled:opacity-50 cursor-pointer"
-                          title="Manually clear status to safe"
-                        >
-                          Reset
-                        </button>
-                      ) : (
-                        <span className="text-[9px] text-slate-400 font-mono uppercase group-hover:text-indigo-600 font-semibold transition">
-                          {isActiveTarget ? "Tracked" : "Track Target"}
-                        </span>
-                      )}
+                          userId={adminUser.uid}
+                          size="sm"
+                        />
+                        {user.status !== "normal" ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              manualResetProfile(user);
+                            }}
+                            disabled={loading[user.uid]}
+                            className="px-2.5 py-1 bg-slate-900 text-white text-[9px] font-extrabold rounded-lg hover:bg-slate-800 transition shadow disabled:opacity-50 cursor-pointer"
+                            title="Manually clear status to safe"
+                          >
+                            Reset
+                          </button>
+                        ) : (
+                          <span className="text-[9px] text-slate-400 font-mono uppercase group-hover:text-indigo-600 font-semibold transition">
+                            {isActiveTarget ? "Tracked" : "Track"}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
-              })}
-
-              {queriedUsers.length === 0 && (
-                <div className="text-center py-8 text-xs text-slate-400">
-                  No matching citizen metrics discovered in Nepal.
-                </div>
-              )}
-            </div>
+              }}
+            />
           </div>
 
         </div>

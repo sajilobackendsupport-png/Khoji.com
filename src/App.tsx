@@ -8,6 +8,9 @@ import UserOnboarding from "./components/UserOnboarding";
 import UserDashboard from "./components/UserDashboard";
 import AdminDashboard from "./components/AdminDashboard";
 import ProfileModal from "./components/ProfileModal";
+import SplashScreen, { StaggeredContainer } from "./components/SplashScreen";
+import SEOHead from "./components/SEOHead";
+import useTheme from "./hooks/useTheme";
 import {
   getActiveProfile,
   getSavedProfiles,
@@ -20,17 +23,19 @@ import { subscribeSiteConfig } from "./utils/siteConfig";
 import { Shield } from "lucide-react";
 
 export default function App() {
+  const { isDark, toggleTheme } = useTheme();
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [showAuthModalForNewAccount, setShowAuthModalForNewAccount] = useState(false);
+  const [pageTitle, setPageTitle] = useState("Khoji.com - Emergency & Device Tracking Nepal");
 
   // Sync document title with Firebase site configuration in real time
   useEffect(() => {
     const unsub = subscribeSiteConfig((cfg) => {
       if (cfg.siteTitle) {
-        document.title = cfg.siteTitle;
+        setPageTitle(cfg.siteTitle);
       }
     });
     return unsub;
@@ -163,6 +168,8 @@ export default function App() {
   if ((!profile && !firebaseUser) || showAuthModalForNewAccount) {
     return (
       <>
+        <SEOHead title={pageTitle} />
+        <SplashScreen />
         <AuthScreen
           onSandboxToggle={handleAuthAccess}
           isLoading={loading}
@@ -182,32 +189,41 @@ export default function App() {
   // --- 2. RENDER PROFILE CREATION ONBOARDING FOR NEW REAL USERS ---
   if (firebaseUser && !profile) {
     return (
-      <UserOnboarding
-        uid={firebaseUser.uid}
-        email={firebaseUser.email || ""}
-        onComplete={handleOnboardingComplete}
-      />
+      <>
+        <SEOHead title={`${pageTitle} - Setup Profile`} />
+        <SplashScreen />
+        <UserOnboarding
+          uid={firebaseUser.uid}
+          email={firebaseUser.email || ""}
+          onComplete={handleOnboardingComplete}
+        />
+      </>
     );
   }
 
   // --- 3. RENDER DASHBOARDS WITH PROFILE SWITCHER MODAL ---
   return (
     <>
-      {profile && profile.role === "admin" ? (
-        <AdminDashboard
-          adminUser={profile}
-          onLogout={handleLogout}
-          onOpenProfileModal={() => setIsProfileModalOpen(true)}
-        />
-      ) : (
-        profile && (
-          <UserDashboard
-            user={profile}
+      <SEOHead title={pageTitle} />
+      <SplashScreen />
+
+      <StaggeredContainer className="min-h-screen bg-slate-900 text-slate-100 antialiased selection:bg-red-500 selection:text-white">
+        {profile && profile.role === "admin" ? (
+          <AdminDashboard
+            adminUser={profile}
             onLogout={handleLogout}
             onOpenProfileModal={() => setIsProfileModalOpen(true)}
           />
-        )
-      )}
+        ) : (
+          profile && (
+            <UserDashboard
+              user={profile}
+              onLogout={handleLogout}
+              onOpenProfileModal={() => setIsProfileModalOpen(true)}
+            />
+          )
+        )}
+      </StaggeredContainer>
 
       {/* Global Profile Switcher / Account Manager Modal */}
       {profile && (

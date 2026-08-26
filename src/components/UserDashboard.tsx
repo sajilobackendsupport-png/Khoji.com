@@ -50,9 +50,15 @@ import {
   BookOpen,
   ChevronDown,
   ChevronUp,
+  Moon,
+  Sun,
+  Bookmark,
 } from "lucide-react";
 import TrackingMap from "./TrackingMap";
 import { soundEngine } from "../utils/alertSound";
+import FuzzySearchFilter from "./FuzzySearchFilter";
+import { BookmarkButton } from "../hooks/useSavedItems";
+import useTheme from "../hooks/useTheme";
 
 interface UserDashboardProps {
   user: UserProfile;
@@ -94,6 +100,7 @@ const getDeviceName = () => {
 };
 
 export default function UserDashboard({ user, onLogout, onOpenProfileModal }: UserDashboardProps) {
+  const { isDark, toggleTheme } = useTheme();
   const [siteConfig, setSiteConfig] = useState<SiteConfig>(getSiteConfigLocal());
   const [showCrisisGuides, setShowCrisisGuides] = useState(false);
   const [status, setStatus] = useState<UserStatus>(user.status || "normal");
@@ -644,6 +651,16 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
         </div>
 
         <div className="flex items-center gap-2.5">
+          {/* Theme Toggle */}
+          <button
+            onClick={toggleTheme}
+            id="user-theme-toggle-btn"
+            className="p-2 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition cursor-pointer border border-slate-200 dark:border-slate-700"
+            title={`Switch to ${isDark ? "Light" : "Dark"} mode`}
+          >
+            {isDark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-700" />}
+          </button>
+
           {onOpenProfileModal && (
             <button
               onClick={onOpenProfileModal}
@@ -798,9 +815,9 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
             </div>
           </div>
 
-          {/* Hotline contacts dynamically synchronized via Firebase Web Customizer */}
-          <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm space-y-4 max-h-[300px] overflow-y-auto">
-            <div className="flex items-center justify-between">
+          {/* Hotline contacts dynamically synchronized via Firebase Web Customizer with Fuzzy Search & Filters */}
+          <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b pb-2">
               <h2 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
                 <Phone className="w-4 h-4 text-slate-700" />
                 <span>Nepalese Hotline Directory</span>
@@ -810,33 +827,61 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
               </span>
             </div>
 
-            <div className="space-y-3 divide-y divide-slate-100">
-              {(siteConfig.contacts && siteConfig.contacts.length > 0 ? siteConfig.contacts : NEPAL_EMERGENCY_CONTACTS).map((contact, idx) => (
-                <div key={idx} className={`pt-2.5 ${idx === 0 ? "pt-0" : ""} flex items-start justify-between gap-2`}>
-                  <div className="space-y-0.5">
+            <FuzzySearchFilter
+              items={siteConfig.contacts && siteConfig.contacts.length > 0 ? siteConfig.contacts : NEPAL_EMERGENCY_CONTACTS}
+              searchKeys={["name", "description", "location", "category", "number"]}
+              placeholder="Fuzzy search hotlines (e.g. 'polce', 'amblance', 'ktm')..."
+              categoryKey="category"
+              titleKey="name"
+              debounceMs={250}
+              fuzzyThreshold={0.35}
+              showCategoryPills={true}
+              renderItem={(contact, idx, meta) => (
+                <div
+                  key={contact.id || idx}
+                  className="p-3 bg-slate-50/70 hover:bg-slate-50 border border-slate-200/80 rounded-xl transition flex items-start justify-between gap-2.5"
+                >
+                  <div className="space-y-0.5 min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-xs font-bold text-slate-800">{contact.name}</span>
+                      <span className="text-xs font-bold text-slate-900">{contact.name}</span>
                       {contact.category && (
-                        <span className="text-[8px] uppercase font-bold px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">
+                        <span className="text-[8px] uppercase font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
                           {contact.category}
+                        </span>
+                      )}
+                      {meta.isFuzzyMatch && meta.searchScore !== undefined && (
+                        <span className="text-[8px] font-mono font-semibold px-1 py-0.2 rounded bg-blue-100 text-blue-700">
+                          match {(100 - (meta.searchScore * 100)).toFixed(0)}%
                         </span>
                       )}
                     </div>
                     <p className="text-[11px] text-slate-500 leading-normal">{contact.description}</p>
-                    <span className="text-[9px] bg-slate-100 text-slate-500 font-medium px-1.5 py-0.5 rounded-full inline-block">
+                    <span className="text-[9px] bg-white text-slate-600 font-medium px-1.5 py-0.5 rounded border border-slate-200 inline-block">
                       📍 {contact.location}
                     </span>
                   </div>
-                  <a
-                    href={`tel:${contact.number}`}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 font-extrabold text-xs rounded-lg transition cursor-pointer"
-                  >
-                    <Phone className="w-3 h-3" />
-                    <span>{contact.number}</span>
-                  </a>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <BookmarkButton
+                      item={{
+                        id: `hotline-${contact.number}-${contact.name}`,
+                        title: contact.name,
+                        category: contact.category,
+                        description: contact.description,
+                      }}
+                      userId={user.uid}
+                      size="sm"
+                    />
+                    <a
+                      href={`tel:${contact.number}`}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 font-extrabold text-xs rounded-xl transition cursor-pointer"
+                    >
+                      <Phone className="w-3 h-3" />
+                      <span>{contact.number}</span>
+                    </a>
+                  </div>
                 </div>
-              ))}
-            </div>
+              )}
+            />
           </div>
 
           {/* Crisis Guides and Safety Protocols from Firebase Customizer */}
