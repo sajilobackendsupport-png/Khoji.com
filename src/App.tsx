@@ -93,9 +93,9 @@ export default function App() {
 
     if (mode === "legacy-demo" && mockRole === "admin") {
       const adminProfile: UserProfile = {
-        uid: "sajilo-admin-root",
-        email: "sajilobackendsupport@gmail.com",
-        fullName: "Sajilo Command Dispatcher",
+        uid: "ep-admin-root",
+        email: "epadmin@khoji.com",
+        fullName: "Emergency Command Dispatcher",
         phone: "9851080000",
         role: "admin",
         status: "normal",

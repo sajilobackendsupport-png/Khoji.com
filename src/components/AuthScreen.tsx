@@ -253,11 +253,11 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
     const userClean = adminUsername.trim();
     const passClean = adminPassword.trim();
 
-    if (userClean === "sajilo@111" && passClean === "Nepal@111") {
+    if (userClean === "Epadmin" && passClean === "adminEp") {
       onSandboxToggle("legacy-demo", "admin");
     } else {
       setError(
-        "❌ Access Denied: Invalid dispatcher credentials. Authorized Admin: 'sajilo@111' / 'Nepal@111'."
+        "Access Denied: Invalid administrator username or password."
       );
     }
     setLoading(false);
@@ -642,7 +642,7 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
                 <input
                   type="text"
                   required
-                  placeholder="e.g. sajilo@111"
+                  placeholder="Enter administrator username"
                   value={adminUsername}
                   onChange={(e) => setAdminUsername(e.target.value)}
                   className="w-full text-xs pl-10 pr-4 py-3 bg-slate-900/60 border border-slate-800 text-white rounded-xl focus:border-red-500 focus:outline-none transition font-mono"
