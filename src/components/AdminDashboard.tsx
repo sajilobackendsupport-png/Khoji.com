@@ -33,6 +33,7 @@ import {
 import TrackingMap from "./TrackingMap";
 import FirebaseWebCustomizer from "./FirebaseWebCustomizer";
 import AdminUserDirectoryAndRequests from "./AdminUserDirectoryAndRequests";
+import AdminRealtimeSheetAndAnalytics from "./AdminRealtimeSheetAndAnalytics";
 import FuzzySearchFilter from "./FuzzySearchFilter";
 import { BookmarkButton } from "../hooks/useSavedItems";
 import useTheme from "../hooks/useTheme";
@@ -52,7 +53,7 @@ import {
   getSiteConfigLocal,
   DEFAULT_SITE_CONFIG,
 } from "../utils/siteConfig";
-import { Clock, ArrowRightLeft } from "lucide-react";
+import { Clock, ArrowRightLeft, FileSpreadsheet, BarChart2, TrendingUp } from "lucide-react";
 
 interface AdminDashboardProps {
   adminUser: UserProfile;
@@ -71,8 +72,8 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
   const [loading, setLoading] = useState<{ [key: string]: boolean }>({});
   const [sysLog, setSysLog] = useState<{ id: string; msg: string; time: string }[]>([]);
 
-  // Navigation View Tab: Dispatch Map vs Service Requests vs Citizen Management vs Firebase Customizer
-  const [adminViewMode, setAdminViewMode] = useState<"dispatch" | "requests" | "citizens" | "customizer">("dispatch");
+  // Navigation View Tab: Dispatch Map vs Realtime Sheet vs Analytics vs Service Requests vs Citizen Management vs Firebase Customizer
+  const [adminViewMode, setAdminViewMode] = useState<"dispatch" | "sheet" | "analytics" | "requests" | "citizens" | "customizer">("dispatch");
   const [siteConfig, setSiteConfig] = useState<SiteConfig>(getSiteConfigLocal());
 
   // Sound & Notification state
@@ -716,7 +717,7 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
           </div>
         </div>
 
-        {/* Navigation Tabs (Dispatch Radar vs Service Requests Timeline vs Citizen Registry vs Firebase Customizer) */}
+        {/* Navigation Tabs (Dispatch Radar vs Realtime Sheet & Analytics vs Service Requests vs Citizen Registry vs Firebase Customizer) */}
         <div className="flex items-center bg-slate-800/90 p-1 rounded-2xl border border-slate-700/80 gap-1 flex-wrap">
           <button
             onClick={() => setAdminViewMode("dispatch")}
@@ -728,6 +729,23 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
           >
             <LayoutDashboard className="w-3.5 h-3.5" />
             <span>Live Radar & GPS</span>
+          </button>
+
+          <button
+            onClick={() => setAdminViewMode("sheet")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+              adminViewMode === "sheet" || adminViewMode === "analytics"
+                ? "bg-emerald-600 text-white shadow-md ring-2 ring-emerald-400/40"
+                : "text-slate-300 hover:text-white hover:bg-slate-700/60"
+            }`}
+            title="Open Live Realtime Sheet with exact timestamps, user names, resolved intervals, and hotspot graphs"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-300" />
+            <span>Data Sheet & Analytics</span>
+            <span className="text-[10px] bg-emerald-950/80 text-emerald-300 font-mono px-1.5 py-0.2 rounded font-extrabold flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+              <span>{emergencies.length}</span>
+            </span>
           </button>
 
           <button
@@ -883,6 +901,30 @@ export default function AdminDashboard({ adminUser, onLogout, onOpenProfileModal
               addLog("✨ Firebase Site Customization successfully deployed!");
             }}
             onClose={() => setAdminViewMode("dispatch")}
+          />
+        </div>
+      ) : adminViewMode === "sheet" || adminViewMode === "analytics" ? (
+        <div className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6">
+          <AdminRealtimeSheetAndAnalytics
+            emergencies={emergencies}
+            users={users}
+            onSelectEmergency={(alert) => {
+              setSelectedEmergency(alert);
+              setSelectedUser(null);
+              setAdminViewMode("dispatch");
+              addLog(`Focused master radar on emergency incident: [${alert.userName} - ${alert.type.toUpperCase()}].`);
+            }}
+            onSelectUser={(targetUser) => {
+              setSelectedUser(targetUser);
+              setSelectedEmergency(null);
+              setAdminViewMode("dispatch");
+              addLog(`Focused master radar on citizen: [${targetUser.fullName}].`);
+            }}
+            onResolveEmergency={(alert) => resolveEmergency(alert)}
+            onRedirectEmergencyService={(alert, newType, notes) =>
+              handleRedirectEmergencyService(alert, newType, notes)
+            }
+            isDark={isDark}
           />
         </div>
       ) : adminViewMode === "requests" || adminViewMode === "citizens" ? (
