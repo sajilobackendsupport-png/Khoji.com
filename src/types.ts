@@ -106,6 +106,8 @@ export interface CrisisGuideItem {
   summary: string;
   steps: string[];
   helpline?: string;
+  icon?: string;
+  content?: string;
 }
 
 export interface SiteConfig {
@@ -121,6 +123,7 @@ export interface SiteConfig {
   bannerEnabled: boolean;
   bannerText: string;
   bannerType: "info" | "warning" | "critical" | "drill";
+  bannerSeverity?: "info" | "warning" | "critical" | "drill";
   bannerActionText?: string;
   bannerActionLink?: string;
 

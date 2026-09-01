@@ -99,48 +99,98 @@ export default function TrackingMap({
 
   // 1. Initialize Leaflet Map (scrollWheelZoom disabled by default for buttery smooth page scrolling)
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
+    if (!containerRef.current) return;
 
-    // Initial center: prefer simulateLocation if passed, else Kathmandu
-    const initialLat = simulateLocation?.lat || (users.length > 0 && users[0].lastLocation?.lat) || 27.7172;
-    const initialLng = simulateLocation?.lng || (users.length > 0 && users[0].lastLocation?.lng) || 85.324;
-
-    const map = L.map(containerRef.current, {
-      zoomControl: true,
-      scrollWheelZoom: false, // Prevents map from intercepting page scroll
-      touchZoom: true,
-      zoomAnimation: true,
-      fadeAnimation: true,
-    }).setView([initialLat, initialLng], 15);
-
-    mapRef.current = map;
-
-    // Standard OpenStreetMap tiles with fast caching
-    const tileUrl =
-      mapLayer === "satellite"
-        ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-        : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
-
-    tileLayerRef.current = L.tileLayer(tileUrl, {
-      maxZoom: 19,
-      attribution:
-        mapLayer === "satellite"
-          ? '&copy; <a href="https://www.esri.com/">Esri</a> Satellite Nepal Grid'
-          : '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> Nepal Live Grid',
-    }).addTo(map);
-
-    if (interactive && onMapClick) {
-      map.on("click", (e: L.LeafletMouseEvent) => {
-        onMapClick(e.latlng.lat, e.latlng.lng);
+    // Fix default Leaflet icon urls to prevent 404 asset failures
+    try {
+      delete (L.Icon.Default.prototype as any)._getIconUrl;
+      L.Icon.Default.mergeOptions({
+        iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
+        iconUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
+        shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
       });
+    } catch (e) {
+      console.warn("Leaflet default icon setup notice:", e);
     }
 
-    return () => {
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
+    // Defensive check: If DOM node already has an initialized Leaflet instance, destroy it
+    if ((containerRef.current as any)._leaflet_id) {
+      try {
+        (containerRef.current as any)._leaflet_id = null;
+      } catch (e) {
+        console.warn("Leaflet ID reset notice:", e);
       }
-    };
+    }
+
+    if (mapRef.current) {
+      try {
+        mapRef.current.remove();
+      } catch (e) {
+        console.warn("Leaflet map remove notice:", e);
+      }
+      mapRef.current = null;
+    }
+
+    try {
+      // Initial center: prefer simulateLocation if passed, else Kathmandu
+      const initialLat = simulateLocation?.lat || (users.length > 0 && users[0].lastLocation?.lat) || 27.7172;
+      const initialLng = simulateLocation?.lng || (users.length > 0 && users[0].lastLocation?.lng) || 85.324;
+
+      const map = L.map(containerRef.current, {
+        zoomControl: false, // Zoom control repositioned to bottomright to prevent top header overlaps
+        scrollWheelZoom: false, // Prevents map from intercepting page scroll
+        touchZoom: true,
+        zoomAnimation: true,
+        fadeAnimation: true,
+      }).setView([initialLat, initialLng], 15);
+
+      mapRef.current = map;
+
+      // Add zoom control at bottom right (standard GIS position)
+      L.control.zoom({ position: "bottomright" }).addTo(map);
+
+      // Standard OpenStreetMap tiles with fast caching
+      const tileUrl =
+        mapLayer === "satellite"
+          ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+          : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+
+      tileLayerRef.current = L.tileLayer(tileUrl, {
+        maxZoom: 19,
+        attribution:
+          mapLayer === "satellite"
+            ? '&copy; <a href="https://www.esri.com/">Esri</a> Satellite Nepal Grid'
+            : '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> Nepal Live Grid',
+      }).addTo(map);
+
+      if (interactive && onMapClick) {
+        map.on("click", (e: L.LeafletMouseEvent) => {
+          onMapClick(e.latlng.lat, e.latlng.lng);
+        });
+      }
+
+      // Automatically recalculate map dimensions when viewport or container size shifts
+      const resizeObserver = new ResizeObserver(() => {
+        if (mapRef.current) {
+          try {
+            mapRef.current.invalidateSize();
+          } catch {}
+        }
+      });
+      resizeObserver.observe(containerRef.current);
+
+      return () => {
+        resizeObserver.disconnect();
+        if (mapRef.current) {
+          try {
+            mapRef.current.remove();
+          } catch {}
+          mapRef.current = null;
+        }
+      };
+    } catch (err) {
+      console.error("Leaflet map initialization error:", err);
+    }
   }, []);
 
   // Update Tile Layer if user switches between Street and Satellite
@@ -647,14 +697,14 @@ export default function TrackingMap({
   const targetHistory = selectedUser ? trajectoryHistoryRef.current[selectedUser.uid] || [] : [];
 
   return (
-    <div className="relative w-full h-full rounded-2xl overflow-hidden border border-slate-200 shadow-sm bg-slate-950 flex flex-col">
-      {/* Top Map Control Bar */}
-      <div className="absolute top-3 left-3 right-3 z-[1000] flex items-center justify-between pointer-events-none flex-wrap gap-2">
-        {/* Left Status pill */}
-        <div className="flex items-center gap-2 pointer-events-auto flex-wrap">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900/90 text-white rounded-xl shadow-lg border border-slate-800 backdrop-blur-md text-xs font-semibold">
+    <div className="relative w-full h-full min-h-[380px] rounded-2xl overflow-hidden border border-slate-700/80 shadow-md bg-slate-950 flex flex-col">
+      {/* Integrated Dedicated Header Toolbar - Guaranteed Zero Overlaps & Smooth Responsive Scroll */}
+      <div className="bg-slate-900/95 border-b border-slate-800 px-3 py-2 flex items-center justify-between gap-2 overflow-x-auto no-scrollbar z-20 flex-shrink-0">
+        {/* Left Status Group */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-950 text-white rounded-xl border border-slate-800 text-xs font-semibold shadow-inner">
             <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-            <span>GPS Tracking Grid</span>
+            <span className="hidden sm:inline">GPS Tracking Grid</span>
             <span className="text-[10px] px-1.5 py-0.5 bg-emerald-950 text-emerald-300 rounded font-mono border border-emerald-800">
               {locationSource.toUpperCase()}
             </span>
@@ -662,10 +712,10 @@ export default function TrackingMap({
 
           <button
             onClick={() => setAutoFollow(!autoFollow)}
-            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition shadow-md pointer-events-auto backdrop-blur-md border cursor-pointer ${
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition shadow-sm border cursor-pointer flex-shrink-0 ${
               autoFollow
                 ? "bg-indigo-600 text-white border-indigo-500 shadow-indigo-500/20"
-                : "bg-slate-900/90 text-slate-300 border-slate-800 hover:text-white"
+                : "bg-slate-800/90 text-slate-300 border-slate-700 hover:text-white"
             }`}
             title="Automatically keep camera centered on position"
           >
@@ -674,12 +724,12 @@ export default function TrackingMap({
           </button>
         </div>
 
-        {/* Right Map Actions */}
-        <div className="flex items-center gap-2 pointer-events-auto flex-wrap">
+        {/* Right Map Actions Group */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           {/* Map Layer Switcher (Street vs Satellite) */}
           <button
             onClick={() => setMapLayer(mapLayer === "standard" ? "satellite" : "standard")}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition shadow-md backdrop-blur-md border bg-slate-900/90 text-slate-200 border-slate-800 hover:text-white cursor-pointer"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition border bg-slate-800/90 text-slate-200 border-slate-700 hover:text-white cursor-pointer flex-shrink-0"
             title="Toggle Satellite Imagery / Standard Map"
           >
             <Layers className="w-3.5 h-3.5 text-blue-400" />
@@ -689,21 +739,21 @@ export default function TrackingMap({
           {/* Scroll Zoom Toggle */}
           <button
             onClick={() => setScrollZoomEnabled(!scrollZoomEnabled)}
-            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition shadow-md backdrop-blur-md border cursor-pointer ${
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition border cursor-pointer flex-shrink-0 ${
               scrollZoomEnabled
                 ? "bg-amber-600 text-white border-amber-500 shadow-amber-500/20"
-                : "bg-slate-900/90 text-slate-300 border-slate-800 hover:text-white"
+                : "bg-slate-800/90 text-slate-300 border-slate-700 hover:text-white"
             }`}
             title="Toggle whether mouse scroll zooms the map or scrolls the page smoothly"
           >
             <MousePointer className="w-3.5 h-3.5" />
-            <span>Scroll Zoom: {scrollZoomEnabled ? "ON" : "OFF"}</span>
+            <span>Scroll: {scrollZoomEnabled ? "ON" : "OFF"}</span>
           </button>
 
           {/* Recenter Button */}
           <button
             onClick={handleRecenterOnMe}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition shadow-md backdrop-blur-md border bg-blue-600 hover:bg-blue-500 text-white border-blue-500 cursor-pointer shadow-blue-500/20"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition border bg-blue-600 hover:bg-blue-500 text-white border-blue-500 cursor-pointer shadow-sm shadow-blue-500/20 flex-shrink-0"
             title="Center map on my current real coordinates"
           >
             <Crosshair className="w-3.5 h-3.5" />
@@ -714,7 +764,7 @@ export default function TrackingMap({
           {users.length > 1 && (
             <button
               onClick={handleFitAllBounds}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition shadow-md backdrop-blur-md border bg-slate-900/90 text-slate-300 border-slate-800 hover:text-white cursor-pointer"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition border bg-slate-800/90 text-slate-300 border-slate-700 hover:text-white cursor-pointer flex-shrink-0"
               title="Fit all tracked devices into view"
             >
               <Maximize2 className="w-3.5 h-3.5 text-indigo-400" />
@@ -725,10 +775,10 @@ export default function TrackingMap({
           {/* Trail Toggle */}
           <button
             onClick={() => setShowTrails(!showTrails)}
-            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition shadow-md backdrop-blur-md border cursor-pointer ${
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition border cursor-pointer flex-shrink-0 ${
               showTrails
-                ? "bg-indigo-950/90 text-indigo-300 border-indigo-800"
-                : "bg-slate-900/90 text-slate-400 border-slate-800"
+                ? "bg-indigo-950 text-indigo-300 border-indigo-800"
+                : "bg-slate-800/90 text-slate-400 border-slate-700 hover:text-white"
             }`}
             title="Toggle movement breadcrumb trajectory path"
           >
@@ -739,7 +789,7 @@ export default function TrackingMap({
       </div>
 
       {/* Main Leaflet Canvas Element */}
-      <div id="leaflet-map-element" ref={containerRef} className="w-full h-full z-10" />
+      <div id="leaflet-map-element" ref={containerRef} className="w-full flex-1 min-h-[300px] z-10" />
 
       {/* Bottom Live Target Telemetry & Direction HUD (Opens when a citizen is selected in Admin) */}
       {selectedUser && selectedUser.lastLocation && (

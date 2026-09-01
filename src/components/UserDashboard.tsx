@@ -55,7 +55,6 @@ import {
   Bookmark,
 } from "lucide-react";
 import TrackingMap from "./TrackingMap";
-import { soundEngine } from "../utils/alertSound";
 import FuzzySearchFilter from "./FuzzySearchFilter";
 import { BookmarkButton } from "../hooks/useSavedItems";
 import {
@@ -73,36 +72,46 @@ interface UserDashboardProps {
 }
 
 const getDeviceId = () => {
-  let devId = localStorage.getItem("khoji_device_id");
-  if (!devId) {
-    devId = `dev-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`;
-    localStorage.setItem("khoji_device_id", devId);
+  try {
+    if (typeof window === "undefined") return "dev-ssr-default";
+    let devId = localStorage.getItem("khoji_device_id");
+    if (!devId) {
+      devId = `dev-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`;
+      localStorage.setItem("khoji_device_id", devId);
+    }
+    return devId;
+  } catch (e) {
+    return `dev-fallback-${Date.now()}`;
   }
-  return devId;
 };
 
 const getDeviceName = () => {
-  let devName = localStorage.getItem("khoji_device_name");
-  if (!devName) {
-    const ua = navigator.userAgent;
-    let browserName = "Web Browser";
-    let platformName = "Device";
+  try {
+    if (typeof window === "undefined") return "Web Browser";
+    let devName = localStorage.getItem("khoji_device_name");
+    if (!devName) {
+      const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+      let browserName = "Web Browser";
+      let platformName = "Device";
 
-    if (ua.includes("Firefox")) browserName = "Firefox";
-    else if (ua.includes("Chrome")) browserName = "Chrome";
-    else if (ua.includes("Safari")) browserName = "Safari";
-    else if (ua.includes("Edge")) browserName = "Edge";
+      if (ua.includes("Firefox")) browserName = "Firefox";
+      else if (ua.includes("Chrome")) browserName = "Chrome";
+      else if (ua.includes("Safari")) browserName = "Safari";
+      else if (ua.includes("Edge")) browserName = "Edge";
 
-    if (ua.includes("Android")) platformName = "Android";
-    else if (ua.includes("iPhone") || ua.includes("iPad")) platformName = "iOS";
-    else if (ua.includes("Mac")) platformName = "macOS";
-    else if (ua.includes("Windows")) platformName = "Windows";
-    else if (ua.includes("Linux")) platformName = "Linux";
+      if (ua.includes("Android")) platformName = "Android";
+      else if (ua.includes("iPhone") || ua.includes("iPad")) platformName = "iOS";
+      else if (ua.includes("Mac")) platformName = "macOS";
+      else if (ua.includes("Windows")) platformName = "Windows";
+      else if (ua.includes("Linux")) platformName = "Linux";
 
-    devName = `${browserName} on ${platformName}`;
-    localStorage.setItem("khoji_device_name", devName);
+      devName = `${browserName} on ${platformName}`;
+      localStorage.setItem("khoji_device_name", devName);
+    }
+    return devName;
+  } catch (e) {
+    return "Web Browser on Device";
   }
-  return devName;
 };
 
 export default function UserDashboard({ user, onLogout, onOpenProfileModal }: UserDashboardProps) {
@@ -603,9 +612,8 @@ export default function UserDashboard({ user, onLogout, onOpenProfileModal }: Us
 
     const targetStatus: UserStatus = type === "lost" ? "lost" : "emergency";
     setStatus(targetStatus);
-    soundEngine.playEmergencySiren(4);
 
-    // Prompt user device auto-dialer modal immediately
+    // Prompt user device auto-dialer modal immediately (Siren sound plays exclusively on Admin Dispatch console)
     setActiveDialerAlert(newAlert);
 
     try {
