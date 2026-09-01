@@ -278,9 +278,15 @@ export default function ProfileModal({
                             >
                               {isAdmin ? "Admin Dispatch" : "Citizen"}
                             </span>
+                            {p.emailVerified && (
+                              <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                                <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                                <span>Gmail Verified</span>
+                              </span>
+                            )}
                             {isActive && (
-                              <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
-                                <CheckCircle2 className="w-2.5 h-2.5" />
+                              <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-slate-900 text-white border border-slate-800 flex items-center gap-1">
+                                <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
                                 <span>Active</span>
                               </span>
                             )}

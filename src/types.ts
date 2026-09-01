@@ -40,6 +40,8 @@ export interface UserProfile {
   address?: string;
   medicalNotes?: string;
   citizenshipNumber?: string;
+  emailVerified?: boolean;
+  verificationMethod?: string;
   lastLocation?: UserLocation;
   devices?: { [deviceId: string]: DeviceInfo };
   createdAt?: string;

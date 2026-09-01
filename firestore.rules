@@ -33,6 +33,18 @@ service cloud.firestore {
       allow read: if true;
       allow write: if true;
     }
+
+    // --- Website Configuration & Customizer CMS ---
+    match /app_config/{configId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // --- System Settings & Metadata ---
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if true;
+    }
   }
 }
 

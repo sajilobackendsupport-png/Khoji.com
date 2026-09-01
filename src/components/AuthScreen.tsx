@@ -9,6 +9,8 @@ import { doc, getDoc, setDoc } from "firebase/firestore";
 import { UserProfile } from "../types";
 import { saveProfile } from "../utils/profileManager";
 import CountryPhoneInput from "./CountryPhoneInput";
+import EmailVerificationStep from "./EmailVerificationStep";
+import { sendEmailVerificationOTP } from "../utils/emailVerificationService";
 import {
   Shield,
   Radio,
@@ -49,10 +51,77 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
   const [phoneInput, setPhoneInput] = useState("");
   const [isPhoneValid, setIsPhoneValid] = useState(false);
   const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [isVerifyingEmail, setIsVerifyingEmail] = useState(false);
 
   // Custom Admin form state
   const [adminUsername, setAdminUsername] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
+
+  // Finalizes registration after successful 6-digit Gmail OTP verification
+  const handleFinalizeRegistration = async () => {
+    setLoading(true);
+    setError(null);
+
+    const email = emailInput.trim();
+    const password = passwordInput.trim();
+
+    try {
+      try {
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        const user = userCredential.user;
+
+        const newProfile: UserProfile = {
+          uid: user.uid,
+          email: user.email || email,
+          fullName: fullNameInput.trim(),
+          phone: phoneInput.trim(),
+          role: email === "sajilobackendsupport@gmail.com" ? "admin" : "user",
+          status: "normal",
+          emailVerified: true,
+          verificationMethod: "gmail_otp",
+          updatedAt: new Date().toISOString(),
+        };
+
+        await setDoc(doc(db, "users", user.uid), newProfile);
+        saveProfile(newProfile, true);
+        setSuccessMessage("✅ Email verified! Account registered successfully. Loading dashboard...");
+      } catch (firebaseErr: any) {
+        if (
+          firebaseErr.code === "auth/operation-not-allowed" ||
+          firebaseErr.code === "auth/configuration-not-found"
+        ) {
+          // Direct local profile creation fallback
+          const customUid = `email-${btoa(email).replace(/=/g, "").slice(0, 16)}`;
+          const newProfile: UserProfile = {
+            uid: customUid,
+            email: email,
+            fullName: fullNameInput.trim(),
+            phone: phoneInput.trim(),
+            role: email === "sajilobackendsupport@gmail.com" ? "admin" : "user",
+            status: "normal",
+            emailVerified: true,
+            verificationMethod: "gmail_otp",
+            updatedAt: new Date().toISOString(),
+          };
+          saveProfile(newProfile, true);
+          window.location.reload();
+          return;
+        }
+        throw firebaseErr;
+      }
+    } catch (err: any) {
+      console.error("Registration error:", err);
+      if (err.code === "auth/email-already-in-use") {
+        setError("This email address is already registered. Please switch to 'Sign In'.");
+        setIsVerifyingEmail(false);
+      } else {
+        setError(err.message || "Failed to complete registration.");
+      }
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Handle direct Email & Password Authentication (Zero Popups Required)
   const handleEmailAuth = async (e: React.FormEvent) => {
@@ -90,6 +159,17 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
         setLoading(false);
         return;
       }
+
+      // Trigger 6-digit Gmail Verification Code dispatch
+      try {
+        await sendEmailVerificationOTP(email, fullNameInput.trim());
+        setIsVerifyingEmail(true);
+      } catch (err: any) {
+        setError("Could not dispatch verification code to email. Please check your address.");
+      } finally {
+        setLoading(false);
+      }
+      return;
     }
 
     try {
@@ -136,53 +216,14 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
                 phone: "9800000000",
                 role: email === "sajilobackendsupport@gmail.com" ? "admin" : "user",
                 status: "normal",
+                emailVerified: true,
+                verificationMethod: "email_login",
                 updatedAt: new Date().toISOString(),
               };
               saveProfile(newProfile, true);
               window.location.reload();
               return;
             }
-          }
-          throw firebaseErr;
-        }
-      } else {
-        // Register Mode
-        try {
-          const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-          const user = userCredential.user;
-
-          const newProfile: UserProfile = {
-            uid: user.uid,
-            email: user.email || email,
-            fullName: fullNameInput.trim(),
-            phone: phoneInput.trim(),
-            role: email === "sajilobackendsupport@gmail.com" ? "admin" : "user",
-            status: "normal",
-            updatedAt: new Date().toISOString(),
-          };
-
-          await setDoc(doc(db, "users", user.uid), newProfile);
-          saveProfile(newProfile, true);
-          setSuccessMessage("Account created successfully! Loading your dashboard...");
-        } catch (firebaseErr: any) {
-          if (
-            firebaseErr.code === "auth/operation-not-allowed" ||
-            firebaseErr.code === "auth/configuration-not-found"
-          ) {
-            // Direct local profile creation fallback
-            const customUid = `email-${btoa(email).replace(/=/g, "").slice(0, 16)}`;
-            const newProfile: UserProfile = {
-              uid: customUid,
-              email: email,
-              fullName: fullNameInput.trim(),
-              phone: phoneInput.trim(),
-              role: email === "sajilobackendsupport@gmail.com" ? "admin" : "user",
-              status: "normal",
-              updatedAt: new Date().toISOString(),
-            };
-            saveProfile(newProfile, true);
-            window.location.reload();
-            return;
           }
           throw firebaseErr;
         }
@@ -428,137 +469,157 @@ export default function AuthScreen({ onSandboxToggle, isLoading: parentLoading }
 
         {/* --- TAB 1: EMAIL & PASSWORD LOGIN / REGISTRATION (ZERO POPUPS) --- */}
         {activeTab === "email" && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <div>
-                <h3 className="text-sm font-bold text-white">
-                  {authMode === "login" ? "Citizen Email Login" : "Create Citizen Account"}
-                </h3>
-                <p className="text-[11px] text-slate-400">
-                  {authMode === "login"
-                    ? "Log in with any email & password (no popup window needed)"
-                    : "Register your email for Nepal Emergency Radar"}
-                </p>
-              </div>
-              <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[11px]">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuthMode("login");
-                    setError(null);
-                  }}
-                  className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer ${
-                    authMode === "login" ? "bg-red-600 text-white" : "text-slate-400 hover:text-white"
-                  }`}
-                >
-                  Sign In
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuthMode("register");
-                    setError(null);
-                  }}
-                  className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer ${
-                    authMode === "register" ? "bg-red-600 text-white" : "text-slate-400 hover:text-white"
-                  }`}
-                >
-                  Register
-                </button>
-              </div>
-            </div>
-
-            <form onSubmit={handleEmailAuth} className="space-y-3.5">
-              {/* Full Name & Phone if Registering */}
-              {authMode === "register" && (
-                <>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-mono">
-                      Full Name
-                    </label>
-                    <div className="relative">
-                      <User className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
-                      <input
-                        type="text"
-                        required
-                        placeholder="e.g. Bijay Gurung"
-                        value={fullNameInput}
-                        onChange={(e) => setFullNameInput(e.target.value)}
-                        className="w-full text-xs pl-10 pr-4 py-3 bg-slate-900/60 border border-slate-800 text-white rounded-xl focus:border-red-500 focus:outline-none transition"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Country Code Picker & Validated Phone Input */}
-                  <CountryPhoneInput
-                    id="auth-register-phone-input"
-                    value={phoneInput}
-                    label="Contact Phone Number"
-                    helperText="Select your country code and enter mobile number."
-                    onChange={(formatted, valid, err) => {
-                      setPhoneInput(formatted);
-                      setIsPhoneValid(valid);
-                      setPhoneError(err);
-                      if (valid && error) setError(null);
+          isVerifyingEmail && authMode === "register" ? (
+            <EmailVerificationStep
+              email={emailInput.trim()}
+              fullName={fullNameInput.trim()}
+              onVerified={handleFinalizeRegistration}
+              onCancel={() => setIsVerifyingEmail(false)}
+              isLoading={loading}
+            />
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <div>
+                  <h3 className="text-sm font-bold text-white">
+                    {authMode === "login" ? "Citizen Email Login" : "Create Citizen Account"}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {authMode === "login"
+                      ? "Log in with any email & password (no popup window needed)"
+                      : "Register your Gmail with 6-digit OTP verification"}
+                  </p>
+                </div>
+                <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode("login");
+                      setIsVerifyingEmail(false);
+                      setError(null);
                     }}
-                    required={true}
-                    theme="dark"
-                  />
-                </>
-              )}
-
-              {/* Email Address */}
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-mono">
-                  Email Address
-                </label>
-                <div className="relative">
-                  <Mail className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
-                  <input
-                    type="email"
-                    required
-                    placeholder="e.g. yourname@gmail.com"
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                    className="w-full text-xs pl-10 pr-4 py-3 bg-slate-900/60 border border-slate-800 text-white rounded-xl focus:border-red-500 focus:outline-none transition"
-                  />
+                    className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer ${
+                      authMode === "login" ? "bg-red-600 text-white" : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode("register");
+                      setIsVerifyingEmail(false);
+                      setError(null);
+                    }}
+                    className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer ${
+                      authMode === "register" ? "bg-red-600 text-white" : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    Register
+                  </button>
                 </div>
               </div>
 
-              {/* Password */}
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-mono">
-                  Security Password
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
-                  <input
-                    type="password"
-                    required
-                    placeholder="••••••••••••"
-                    value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
-                    className="w-full text-xs pl-10 pr-4 py-3 bg-slate-900/60 border border-slate-800 text-white rounded-xl focus:border-red-500 focus:outline-none transition"
-                  />
-                </div>
-              </div>
+              <form onSubmit={handleEmailAuth} className="space-y-3.5">
+                {/* Full Name & Phone if Registering */}
+                {authMode === "register" && (
+                  <>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-mono">
+                        Full Name
+                      </label>
+                      <div className="relative">
+                        <User className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. Bijay Gurung"
+                          value={fullNameInput}
+                          onChange={(e) => setFullNameInput(e.target.value)}
+                          className="w-full text-xs pl-10 pr-4 py-3 bg-slate-900/60 border border-slate-800 text-white rounded-xl focus:border-red-500 focus:outline-none transition"
+                        />
+                      </div>
+                    </div>
 
-              <button
-                type="submit"
-                disabled={loading || parentLoading}
-                className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white py-3.5 px-4 rounded-xl font-bold text-xs transition shadow-lg hover:translate-y-[-1px] disabled:opacity-50 cursor-pointer"
-              >
-                <span>
-                  {loading
-                    ? "Authenticating..."
-                    : authMode === "login"
-                    ? "Sign In (No Popup Needed)"
-                    : "Create Account & Enter"}
-                </span>
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </form>
-          </div>
+                    {/* Country Code Picker & Validated Phone Input */}
+                    <CountryPhoneInput
+                      id="auth-register-phone-input"
+                      value={phoneInput}
+                      label="Contact Phone Number"
+                      helperText="Select your country code and enter mobile number."
+                      onChange={(formatted, valid, err) => {
+                        setPhoneInput(formatted);
+                        setIsPhoneValid(valid);
+                        setPhoneError(err);
+                        if (valid && error) setError(null);
+                      }}
+                      required={true}
+                      theme="dark"
+                    />
+                  </>
+                )}
+
+                {/* Email Address */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-mono">
+                      Gmail Address
+                    </label>
+                    {authMode === "register" && (
+                      <span className="text-[10px] text-amber-400 font-semibold flex items-center gap-1">
+                        <Sparkles className="w-3 h-3" />
+                        <span>OTP verification required</span>
+                      </span>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <Mail className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
+                    <input
+                      type="email"
+                      required
+                      placeholder="e.g. yourname@gmail.com"
+                      value={emailInput}
+                      onChange={(e) => setEmailInput(e.target.value)}
+                      className="w-full text-xs pl-10 pr-4 py-3 bg-slate-900/60 border border-slate-800 text-white rounded-xl focus:border-red-500 focus:outline-none transition"
+                    />
+                  </div>
+                </div>
+
+                {/* Password */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block font-mono">
+                    Security Password
+                  </label>
+                  <div className="relative">
+                    <Lock className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
+                    <input
+                      type="password"
+                      required
+                      placeholder="••••••••••••"
+                      value={passwordInput}
+                      onChange={(e) => setPasswordInput(e.target.value)}
+                      className="w-full text-xs pl-10 pr-4 py-3 bg-slate-900/60 border border-slate-800 text-white rounded-xl focus:border-red-500 focus:outline-none transition"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading || parentLoading}
+                  className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white py-3.5 px-4 rounded-xl font-bold text-xs transition shadow-lg hover:translate-y-[-1px] disabled:opacity-50 cursor-pointer"
+                >
+                  <span>
+                    {loading
+                      ? "Processing..."
+                      : authMode === "login"
+                      ? "Sign In (No Popup Needed)"
+                      : "Send Verification Code to Gmail →"}
+                  </span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </form>
+            </div>
+          )
         )}
 
         {/* --- TAB 2: GOOGLE SINGLE SIGN-IN --- */}

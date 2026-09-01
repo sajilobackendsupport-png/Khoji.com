@@ -11,6 +11,8 @@
         "phone": { "type": "string" },
         "role": { "type": "string", "enum": ["user", "admin"] },
         "status": { "type": "string", "enum": ["normal", "lost", "emergency"] },
+        "emailVerified": { "type": "boolean" },
+        "verificationMethod": { "type": "string" },
         "lastLocation": {
           "type": "object"
         },
@@ -36,6 +38,23 @@
         "createdAt": { "type": "string" }
       },
       "required": ["id", "userId", "userName", "userPhone", "type", "status", "createdAt"]
+    },
+    "AppConfig": {
+      "title": "Site Configuration & Dynamic CMS",
+      "description": "Global website settings including theme color, branding, emergency broadcast banner, crisis guides, and hotlines.",
+      "type": "object",
+      "properties": {
+        "siteTitle": { "type": "string" },
+        "siteTagline": { "type": "string" },
+        "brandLogoText": { "type": "string" },
+        "badgeText": { "type": "string" },
+        "themeColor": { "type": "string" },
+        "organizationName": { "type": "string" },
+        "bannerEnabled": { "type": "boolean" },
+        "bannerText": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -46,6 +65,10 @@
     "/emergencies/{emergencyId}": {
       "schema": "Emergency",
       "description": "Active emergency alerts triggered by users, monitored by emergency dispatch admins."
+    },
+    "/app_config/{configId}": {
+      "schema": "AppConfig",
+      "description": "Live website customization and dynamic CMS managed by Admin Dispatchers."
     }
   }
 }
